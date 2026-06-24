@@ -35,7 +35,8 @@ jobs:
 
       - name: Build release bundles
         env:
-          VERSION_CODE: ${{ github.run_number }}
+          # +1000 so CI codes always clear the first manual upload (mobile=1, wear=100001).
+          VERSION_CODE: ${{ 1000 + github.run_number }}
           KEYSTORE_FILE: ${{ github.workspace }}/upload-keystore.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
