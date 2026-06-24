@@ -1,5 +1,7 @@
 package com.wearosgpx.mobile.route
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -16,6 +18,8 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.widget.addTextChangedListener
@@ -34,6 +38,8 @@ import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
+import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
+import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 
 /**
  * Garmin-style route builder. Two steps: (1) name the route, then (2) the map —
@@ -53,6 +59,11 @@ class RouteCreatorActivity : ComponentActivity() {
     private var searchJob: Job? = null
     private var routingJob: Job? = null
     private var warnedNoKey = false
+    private var locationOverlay: MyLocationNewOverlay? = null
+
+    private val requestLocation = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result -> if (result.values.any { it }) enableMyLocation() }
 
     private val neon = Color.parseColor("#FF39FF14")
 
@@ -140,6 +151,49 @@ class RouteCreatorActivity : ComponentActivity() {
         setContentView(mapStep())
         map.onResume()
         updateDistance()
+        ensureLocation()
+    }
+
+    // --- Current location ---------------------------------------------------
+
+    private fun ensureLocation() {
+        val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+        if (granted) enableMyLocation()
+        else requestLocation.launch(
+            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+        )
+    }
+
+    private fun enableMyLocation() {
+        val overlay = locationOverlay ?: MyLocationNewOverlay(GpsMyLocationProvider(this), map).also {
+            locationOverlay = it
+            map.overlays.add(it)
+        }
+        overlay.enableMyLocation()
+        // Centre on the first fix (only auto-centre before the user starts plotting).
+        overlay.runOnFirstFix {
+            runOnUiThread {
+                overlay.myLocation?.let {
+                    if (points.isEmpty()) {
+                        map.controller.setZoom(16.0)
+                        map.controller.animateTo(it)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun recenterOnMe() {
+        val here = locationOverlay?.myLocation
+        if (here != null) {
+            map.controller.setZoom(16.0)
+            map.controller.animateTo(here)
+        } else {
+            ensureLocation()  // re-request / re-enable if we don't have a fix
+        }
     }
 
     private fun mapStep(): FrameLayout {
@@ -236,6 +290,27 @@ class RouteCreatorActivity : ComponentActivity() {
         root.addView(
             bottomBar,
             FrameLayout.LayoutParams(MATCH, WRAP).apply { gravity = Gravity.BOTTOM },
+        )
+
+        // "My location" recenter button, above the bottom bar on the right.
+        val locateButton = Button(this).apply {
+            text = "◎"
+            isAllCaps = false
+            textSize = 18f
+            setTextColor(neon)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.parseColor("#E6000000"))
+            }
+            setOnClickListener { recenterOnMe() }
+        }
+        root.addView(
+            locateButton,
+            FrameLayout.LayoutParams(dp(44), dp(44)).apply {
+                gravity = Gravity.END or Gravity.BOTTOM
+                marginEnd = dp(16)
+                bottomMargin = dp(130)
+            },
         )
 
         // Centered spinner shown while OpenRouteService snaps the route to roads.
@@ -444,6 +519,15 @@ class RouteCreatorActivity : ComponentActivity() {
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
 
-    override fun onResume() { super.onResume(); if (::map.isInitialized) map.onResume() }
-    override fun onPause() { super.onPause(); if (::map.isInitialized) map.onPause() }
+    override fun onResume() {
+        super.onResume()
+        if (::map.isInitialized) map.onResume()
+        locationOverlay?.enableMyLocation()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (::map.isInitialized) map.onPause()
+        locationOverlay?.disableMyLocation()  // stop GPS when not visible
+    }
 }
