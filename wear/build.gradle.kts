@@ -9,10 +9,13 @@ plugins {
 }
 
 // Shared signing — :wear and :mobile must use the SAME key to pair over the Data Layer.
+// Local builds read keystore.properties; CI passes the key via env (KEYSTORE_FILE etc.).
 val keystorePropsFile = rootProject.file("keystore.properties")
 val keystoreProps = Properties().apply {
     if (keystorePropsFile.exists()) keystorePropsFile.inputStream().use { load(it) }
 }
+val envKeystore: String? = System.getenv("KEYSTORE_FILE")
+val hasReleaseSigning = keystorePropsFile.exists() || envKeystore != null
 
 android {
     namespace = "com.wearosgpx"
@@ -22,24 +25,33 @@ android {
         applicationId = "com.wearosgpx"   // MUST match :mobile for Data Layer pairing
         minSdk = 33                        // Wear OS 4
         targetSdk = 35
-        versionCode = 1
+        // CI sets VERSION_CODE (e.g. the run number). Wear is offset so it stays
+        // distinct from the phone AAB within the same Play release.
+        versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1) + 100_000
         versionName = "1.0"
     }
 
     signingConfigs {
-        if (keystorePropsFile.exists()) {
+        if (hasReleaseSigning) {
             create("release") {
-                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
-                storePassword = keystoreProps.getProperty("storePassword")
-                keyAlias = keystoreProps.getProperty("keyAlias")
-                keyPassword = keystoreProps.getProperty("keyPassword")
+                if (keystorePropsFile.exists()) {
+                    storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                    storePassword = keystoreProps.getProperty("storePassword")
+                    keyAlias = keystoreProps.getProperty("keyAlias")
+                    keyPassword = keystoreProps.getProperty("keyPassword")
+                } else {
+                    storeFile = file(envKeystore!!)
+                    storePassword = System.getenv("KEYSTORE_PASSWORD")
+                    keyAlias = System.getenv("KEY_ALIAS")
+                    keyPassword = System.getenv("KEY_PASSWORD")
+                }
             }
         }
     }
 
     buildTypes {
         release {
-            if (keystorePropsFile.exists()) signingConfig = signingConfigs.getByName("release")
+            if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

@@ -9,10 +9,13 @@ plugins {
 }
 
 // Shared signing — must match :wear exactly for Data Layer pairing.
+// Local builds read keystore.properties; CI passes the key via env (KEYSTORE_FILE etc.).
 val keystorePropsFile = rootProject.file("keystore.properties")
 val keystoreProps = Properties().apply {
     if (keystorePropsFile.exists()) keystorePropsFile.inputStream().use { load(it) }
 }
+val envKeystore: String? = System.getenv("KEYSTORE_FILE")
+val hasReleaseSigning = keystorePropsFile.exists() || envKeystore != null
 
 // OpenRouteService API key for road-snapping (put ORS_API_KEY=... in local.properties).
 val localProps = Properties().apply {
@@ -28,25 +31,34 @@ android {
         applicationId = "com.wearosgpx"   // SAME as :wear — mandatory for pairing
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
+        // CI sets VERSION_CODE (e.g. the run number); ORS key may also come from env in CI.
+        versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
         versionName = "1.0"
-        buildConfigField("String", "ORS_API_KEY", "\"${localProps.getProperty("ORS_API_KEY", "")}\"")
+        val orsKey = System.getenv("ORS_API_KEY") ?: localProps.getProperty("ORS_API_KEY", "")
+        buildConfigField("String", "ORS_API_KEY", "\"$orsKey\"")
     }
 
     signingConfigs {
-        if (keystorePropsFile.exists()) {
+        if (hasReleaseSigning) {
             create("release") {
-                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
-                storePassword = keystoreProps.getProperty("storePassword")
-                keyAlias = keystoreProps.getProperty("keyAlias")
-                keyPassword = keystoreProps.getProperty("keyPassword")
+                if (keystorePropsFile.exists()) {
+                    storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                    storePassword = keystoreProps.getProperty("storePassword")
+                    keyAlias = keystoreProps.getProperty("keyAlias")
+                    keyPassword = keystoreProps.getProperty("keyPassword")
+                } else {
+                    storeFile = file(envKeystore!!)
+                    storePassword = System.getenv("KEYSTORE_PASSWORD")
+                    keyAlias = System.getenv("KEY_ALIAS")
+                    keyPassword = System.getenv("KEY_PASSWORD")
+                }
             }
         }
     }
 
     buildTypes {
         release {
-            if (keystorePropsFile.exists()) signingConfig = signingConfigs.getByName("release")
+            if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
