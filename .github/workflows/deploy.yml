@@ -44,13 +44,23 @@ jobs:
           ORS_API_KEY: ${{ secrets.ORS_API_KEY }}   # optional; blank if unset
         run: ./gradlew :mobile:bundleRelease :wear:bundleRelease
 
-      - name: Upload to Play (internal track)
+      # Wear OS apps must publish to a DEDICATED Wear OS track (Aug 2023 policy),
+      # separate from the phone app — so two uploads, two tracks.
+      - name: Upload phone app (internal track)
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: com.wearosgpx
-          releaseFiles: |
-            mobile/build/outputs/bundle/release/mobile-release.aab
-            wear/build/outputs/bundle/release/wear-release.aab
+          releaseFiles: mobile/build/outputs/bundle/release/mobile-release.aab
           track: internal
+          status: completed
+
+      - name: Upload Wear OS app (Wear OS internal track)
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.wearosgpx
+          releaseFiles: wear/build/outputs/bundle/release/wear-release.aab
+          # Wear OS internal track id — verify against the Console; usually "wear:internal".
+          track: wear:internal
           status: completed
