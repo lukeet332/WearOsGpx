@@ -81,7 +81,7 @@ object BaseMapService {
         }.getOrNull()
     }
 
-    private fun classify(highway: String?, waterway: String?, natural: String?): Int? = when {
+    internal fun classify(highway: String?, waterway: String?, natural: String?): Int? = when {
         natural == "water" || waterway != null -> T_WATER
         highway == null -> null
         highway.startsWith("motorway") || highway.startsWith("trunk") ||
@@ -109,7 +109,7 @@ object BaseMapService {
 
     // --- Douglas–Peucker (lat/lon as planar; fine at these scales) ---
 
-    private fun simplify(points: List<Pair<Double, Double>>, eps: Double): List<Pair<Double, Double>> {
+    internal fun simplify(points: List<Pair<Double, Double>>, eps: Double): List<Pair<Double, Double>> {
         if (points.size < 3) return points
         val keep = BooleanArray(points.size)
         keep[0] = true; keep[points.size - 1] = true

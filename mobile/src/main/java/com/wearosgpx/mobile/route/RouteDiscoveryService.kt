@@ -105,7 +105,7 @@ object RouteDiscoveryService {
     // --- geometry assembly ---
 
     /** Greedily chain unordered way segments into one polyline, flipping to connect endpoints. */
-    private fun assemble(ways: List<List<Pair<Double, Double>>>): List<Pair<Double, Double>> {
+    internal fun assemble(ways: List<List<Pair<Double, Double>>>): List<Pair<Double, Double>> {
         val remaining = ways.toMutableList()
         val chain = ArrayList(remaining.removeAt(0))
         while (remaining.isNotEmpty()) {

@@ -88,6 +88,8 @@ android {
 }
 
 dependencies {
+    testImplementation(libs.junit)
+
     implementation(libs.core.ktx)
     implementation(libs.activity.ktx)            // ComponentActivity + permission contract
     implementation(libs.activity.compose)

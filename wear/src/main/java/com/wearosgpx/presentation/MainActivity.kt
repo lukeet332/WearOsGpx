@@ -1340,27 +1340,6 @@ private fun rememberLiveElapsedMillis(state: ExerciseServiceState): Long {
     return state.elapsedMillis(now)
 }
 
-/** mm:ss, or h:mm:ss past an hour. */
-private fun formatElapsed(millis: Long): String {
-    val totalSec = millis / 1000
-    val h = totalSec / 3600
-    val m = (totalSec % 3600) / 60
-    val s = totalSec % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
-}
-
-/** Average pace as min:sec per km, or "--:--" before enough distance is logged. */
-private fun formatPace(distanceMeters: Double, durationMillis: Long): String {
-    if (distanceMeters < 20.0 || durationMillis <= 0L) return "--:--"
-    val secPerKm = (durationMillis / 1000.0) / (distanceMeters / 1000.0)
-    if (secPerKm.isInfinite() || secPerKm > 5_999) return "--:--"
-    return "%d:%02d".format((secPerKm / 60).toInt(), (secPerKm % 60).toInt())
-}
-
-private fun hrText(bpm: Double?): String = bpm?.let { "%.0f".format(it) } ?: "--"
-
-private fun formatDistanceShort(meters: Double): String =
-    if (meters < 1000) "${meters.roundToInt()} m" else "%.2f km".format(meters / 1000)
 
 /** A view radius (meters) that roughly frames the whole route — the zoom-in start. */
 private fun routeFitRadius(points: List<GeoPoint>): Float {
