@@ -69,8 +69,6 @@ import com.wearosgpx.mobile.route.RouteCreatorActivity
 import com.wearosgpx.mobile.route.RoutePreviewMapView
 import com.wearosgpx.mobile.settings.AppSettings
 import com.wearosgpx.mobile.settings.SettingsActivity
-import com.wearosgpx.mobile.strava.StravaClient
-import com.wearosgpx.mobile.strava.StravaImportActivity
 import com.wearosgpx.mobile.sync.RunImporter
 import com.wearosgpx.mobile.sync.WatchRoutes
 import kotlinx.coroutines.Dispatchers
@@ -121,7 +119,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        handleStravaRedirect(intent)
         handleIncomingGpx(intent)
         requestInitialPermissionsOnce()
         setContent {
@@ -145,7 +142,6 @@ class MainActivity : ComponentActivity() {
                 onSendToWatch = ::sendToWatch,
                 onRefresh = ::refreshRoutes,
                 onResync = { syncQueuedRuns(auto = false) },
-                onImportStrava = { startActivity(Intent(this, StravaImportActivity::class.java)) },
             )
         }
     }
@@ -153,7 +149,6 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleStravaRedirect(intent)
         handleIncomingGpx(intent)
     }
 
@@ -244,25 +239,6 @@ class MainActivity : ComponentActivity() {
             Intent(this, SettingsActivity::class.java)
                 .putExtra(SettingsActivity.EXTRA_PROMPT, true)
         )
-    }
-
-    /** Catch the OAuth redirect (wearosgpx://localhost?code=…) and exchange for tokens. */
-    private fun handleStravaRedirect(intent: Intent?) {
-        val data = intent?.data ?: return
-        if (data.scheme != "wearosgpx" || data.host != "localhost") return
-        val code = data.getQueryParameter("code")
-        if (code == null) {
-            Toast.makeText(this, "Strava authorization cancelled", Toast.LENGTH_LONG).show(); return
-        }
-        lifecycleScope.launch {
-            val ok = StravaClient.exchangeCode(applicationContext, code)
-            Toast.makeText(
-                this@MainActivity,
-                if (ok) "Connected to Strava — runs will upload automatically" else "Strava connection failed",
-                Toast.LENGTH_LONG,
-            ).show()
-            if (ok) syncQueuedRuns(auto = true)   // upload any already-recorded runs
-        }
     }
 
     /** Catch up any runs still queued on the Data Layer (e.g. delivered while asleep). */
@@ -492,7 +468,6 @@ private fun CompanionApp(
     onSendToWatch: (RouteRow) -> Unit,
     onRefresh: () -> Unit,
     onResync: () -> Unit,
-    onImportStrava: () -> Unit,
 ) {
     MaterialTheme(
         colorScheme = darkColorScheme(
@@ -556,14 +531,6 @@ private fun CompanionApp(
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A), contentColor = Color.White),
             ) { Text("Import GPX file") }
-            if (StravaClient.isConnected(LocalContext.current)) {
-                Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = onImportStrava,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A), contentColor = Color(0xFFFC4C02)),
-                ) { Text("Import from Strava (my routes & runs)") }
-            }
 
             Spacer(Modifier.height(24.dp))
             Row(

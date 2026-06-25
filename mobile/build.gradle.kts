@@ -36,12 +36,6 @@ android {
         versionName = System.getenv("VERSION_NAME") ?: "1.0"   // CI sets the AI-decided semver
         val orsKey = System.getenv("ORS_API_KEY") ?: localProps.getProperty("ORS_API_KEY", "")
         buildConfigField("String", "ORS_API_KEY", "\"$orsKey\"")
-        // Strava API app credentials (put STRAVA_CLIENT_ID / STRAVA_CLIENT_SECRET in
-        // local.properties; register the app at strava.com/settings/api).
-        val stravaId = System.getenv("STRAVA_CLIENT_ID") ?: localProps.getProperty("STRAVA_CLIENT_ID", "")
-        val stravaSecret = System.getenv("STRAVA_CLIENT_SECRET") ?: localProps.getProperty("STRAVA_CLIENT_SECRET", "")
-        buildConfigField("String", "STRAVA_CLIENT_ID", "\"$stravaId\"")
-        buildConfigField("String", "STRAVA_CLIENT_SECRET", "\"$stravaSecret\"")
     }
 
     signingConfigs {

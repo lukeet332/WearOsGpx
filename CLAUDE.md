@@ -94,8 +94,8 @@ structures explicitly (services, manifests, Gradle, Compose), don't assume Andro
   progress, 50° "proper bend" turn threshold), `Formatting` (pace/elapsed/distance), `RouteProjector`
   (fit/centered projection), `GpxRoute` (distance/ascent). mobile — `HealthConnectPrep` (dedupe dup
   timestamps + HR 1..300 clamp/drop — the past sync bug), `BaseMapService` (OSM classify + Douglas–Peucker),
-  `RouteDiscoveryService.assemble` (way chaining/flip), `GpxBuilder` + `StravaActivityGpx` (GPX output:
-  time + `gpxtpx:hr`).
+  `RouteDiscoveryService.assemble` (way chaining/flip), `RoutingPayloads` (ORS shaping),
+  `GpxBuilder` (GPX output incl. `renamed`), `AiRouteLogic` (action protocol + geometry).
 
 ## Phased plan
 
