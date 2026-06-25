@@ -64,7 +64,7 @@ jobs:
       # Opens a PR only if Gemini actually changed something. The PR is gated by CI
       # like any other; pr-self-heal.yml will iterate if the first try isn't enough.
       - name: Open a fix PR
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.BOT_PAT }}
           branch: gemini/main-fix
