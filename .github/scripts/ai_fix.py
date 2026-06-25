@@ -3,15 +3,19 @@
 Fix deprecated APIs / build & CI failures found in the Gradle/CI log and apply the
 changes to the working tree.
 
-Model: heavy-lift reasoning via **GitHub Models (GPT-4.1)** using the repo's
-GITHUB_TOKEN (needs `models: read`), with **Gemini as an automatic fallback** if
-GitHub Models is unavailable or rate-limited. Both return the same JSON shape, so
-the rest of the script is provider-agnostic.
+The active model is read from `.github/ai_model.json` (provider, OpenAI-compatible
+base_url, model, and which env var holds its key). Default = GitHub Models GPT-4.1
+via the workflow GITHUB_TOKEN. The monthly `ai-model-review.yml` job can switch it to
+any OpenAI-compatible provider by editing that file. **Gemini stays as an automatic
+fallback** if the primary is unavailable.
+
+Which model actually produced the fix is written to $GITHUB_OUTPUT (model_used,
+provider_used, bot_label) so the workflow can label the PR with the responsible bot.
 
 Safety (unchanged): standard library only; no-ops on missing creds / clean log /
-API failure; only OVERWRITES existing .kt/.kts/.toml files inside the repo
-(path-traversal guarded). The workflow re-runs the tests afterwards, so a bad edit
-can never merge.
+API failure; only OVERWRITES existing .kt/.kts/.toml files inside the repo (plus its
+own AI_CONTEXT.md note), path-traversal guarded. The workflow re-runs the tests
+afterwards, so a bad edit can never merge.
 """
 import json
 import os
@@ -25,9 +29,16 @@ MAX_FILES = 8
 MAX_FILE_BYTES = 16_000
 ALLOWED_SUFFIXES = (".kt", ".kts", ".toml")
 CONTEXT_FILE = (REPO / ".github" / "AI_CONTEXT.md").resolve()
+MODEL_CONFIG = (REPO / ".github" / "ai_model.json").resolve()
 
-GH_TOKEN = os.environ.get("GH_MODELS_TOKEN", "").strip()
-GH_MODEL = os.environ.get("GH_MODEL", "openai/gpt-4.1")
+# Sensible default if ai_model.json is missing/unreadable: GitHub Models GPT-4.1.
+DEFAULT_CONFIG = {
+    "provider": "github-models",
+    "base_url": "https://models.github.ai/inference",
+    "model": os.environ.get("GH_MODEL", "openai/gpt-4.1"),
+    "api_key_env": "GH_MODELS_TOKEN",
+}
+
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
@@ -35,6 +46,34 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 def done(msg: str) -> None:
     print(msg)
     sys.exit(0)  # always succeed; "no changes" is a valid outcome
+
+
+def load_model_config() -> dict:
+    cfg = dict(DEFAULT_CONFIG)
+    try:
+        if MODEL_CONFIG.exists():
+            data = json.loads(MODEL_CONFIG.read_text())
+            for k in ("provider", "base_url", "model", "api_key_env"):
+                if isinstance(data.get(k), str) and data[k].strip():
+                    cfg[k] = data[k].strip()
+    except Exception as e:
+        print(f"Could not read ai_model.json ({e.__class__.__name__}); using default model.")
+    return cfg
+
+
+def bot_label(model: str) -> str:
+    """openai/gpt-4.1 -> gpt-4.1-bot ; gemini-2.5-flash -> gemini-2.5-flash-bot."""
+    name = re.sub(r"[^A-Za-z0-9._-]", "-", model.split("/")[-1])
+    return f"{name}-bot"
+
+
+def record_model(provider: str, model: str) -> None:
+    label = bot_label(model)
+    print(f"Model used: {provider} / {model}  ({label})")
+    out = os.environ.get("GITHUB_OUTPUT")
+    if out:
+        with open(out, "a") as f:
+            f.write(f"model_used={model}\nprovider_used={provider}\nbot_label={label}\n")
 
 
 def read_log() -> str:
@@ -51,11 +90,10 @@ def is_safe(f: Path) -> bool:
         rf.relative_to(REPO)
     except ValueError:
         return False
-    # Source files the bot may patch, plus its own context note (append-only, see prompt).
     return rf.suffix in ALLOWED_SUFFIXES or rf == CONTEXT_FILE
 
 
-def candidate_files(log: str) -> list[Path]:
+def candidate_files(log: str) -> list:
     found, seen = [], set()
     for m in re.finditer(r"((?:mobile|wear)/[\w./-]+\.(?:kt|kts))", log):
         rel = m.group(1)
@@ -91,7 +129,7 @@ file verbatim and add your one bullet at the end. Skip it unless the learning is
 reusable. A human reviews every PR, so never remove or rewrite existing context."""
 
 
-def build_prompt(log: str, files: list[Path]) -> str:
+def build_prompt(log: str, files: list) -> str:
     parts = [PROMPT_HEADER]
     if CONTEXT_FILE.exists():
         parts += ["\n\n===== PROJECT CONTEXT (.github/AI_CONTEXT.md) =====\n",
@@ -113,17 +151,19 @@ def _post(url: str, headers: dict, payload: dict) -> dict:
         return json.loads(resp.read())
 
 
-def call_github_models(prompt: str) -> dict:
-    data = _post(
-        "https://models.github.ai/inference/chat/completions",
-        {"Authorization": f"Bearer {GH_TOKEN}"},
-        {
-            "model": GH_MODEL,
-            "temperature": 0.1,
-            "response_format": {"type": "json_object"},
-            "messages": [{"role": "user", "content": prompt}],
-        },
-    )
+def call_openai_compatible(cfg: dict, prompt: str) -> dict:
+    """Any OpenAI-compatible /chat/completions provider (GitHub Models, Groq, Mistral,
+    OpenRouter, DeepSeek, Gemini's OpenAI endpoint, …)."""
+    key = os.environ.get(cfg["api_key_env"], "").strip()
+    if not key:
+        raise RuntimeError(f"no key in env {cfg['api_key_env']}")
+    url = cfg["base_url"].rstrip("/") + "/chat/completions"
+    data = _post(url, {"Authorization": f"Bearer {key}"}, {
+        "model": cfg["model"],
+        "temperature": 0.1,
+        "response_format": {"type": "json_object"},
+        "messages": [{"role": "user", "content": prompt}],
+    })
     return json.loads(data["choices"][0]["message"]["content"])
 
 
@@ -139,18 +179,23 @@ def call_gemini(prompt: str) -> dict:
     return json.loads(data["candidates"][0]["content"]["parts"][0]["text"])
 
 
-def get_fix(prompt: str) -> dict | None:
-    """GitHub Models (GPT-4.1) first; Gemini as fallback. None if all unavailable."""
-    if GH_TOKEN:
+def get_fix(prompt: str) -> dict:
+    """Configured provider first; Gemini as fallback. None if all unavailable."""
+    cfg = load_model_config()
+    if os.environ.get(cfg["api_key_env"], "").strip():
         try:
-            print(f"Asking GitHub Models ({GH_MODEL})…")
-            return call_github_models(prompt)
-        except Exception as e:  # rate-limit / error → fall through to Gemini
-            print(f"GitHub Models unavailable ({e.__class__.__name__}); falling back to Gemini.")
+            print(f"Asking {cfg['provider']} ({cfg['model']})…")
+            result = call_openai_compatible(cfg, prompt)
+            record_model(cfg["provider"], cfg["model"])
+            return result
+        except Exception as e:
+            print(f"{cfg['provider']} unavailable ({e.__class__.__name__}); falling back to Gemini.")
     if GEMINI_KEY:
         try:
             print(f"Asking Gemini ({GEMINI_MODEL})…")
-            return call_gemini(prompt)
+            result = call_gemini(prompt)
+            record_model("gemini", GEMINI_MODEL)
+            return result
         except Exception as e:
             print(f"Gemini unavailable ({e.__class__.__name__}).")
     return None
@@ -175,8 +220,9 @@ def apply_changes(result: dict) -> int:
 
 
 def main() -> None:
-    if not GH_TOKEN and not GEMINI_KEY:
-        done("No model credentials — skipping (no changes).")
+    cfg = load_model_config()
+    if not os.environ.get(cfg["api_key_env"], "").strip() and not GEMINI_KEY:
+        done("No model credentials available — skipping (no changes).")
     log = read_log()
     if not log or not re.search(r"warning:|error:|deprecat|FAILED|FAILURE|exception|unresolved", log, re.IGNORECASE):
         done("No actionable failure in the log — nothing to do.")
