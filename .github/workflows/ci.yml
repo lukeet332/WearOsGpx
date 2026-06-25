@@ -1,11 +1,12 @@
 name: CI
 
-# Runs the fast, stable JVM unit tests on every PR — the required gate before merge.
-# PR-only: main is only ever updated by merging a green, up-to-date PR (strict branch
-# protection), so re-testing main after merge would just be redundant CI minutes.
-# No emulator/instrumented tests — kept quick and flake-free.
+# Fast, stable JVM unit tests. On PRs it's the required merge gate; on main it's a
+# health monitor (free minutes on public repos) — and if main ever goes red,
+# gemini-main-fix.yml debugs it and opens a fix PR. No emulator/instrumented tests.
 on:
   pull_request:
+    branches: [ main ]
+  push:
     branches: [ main ]
 
 # Read-only: this workflow touches no secrets and needs no write access.
