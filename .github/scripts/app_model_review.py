@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-Weekly: refresh the diverse FREE model menu for the phone app's AI running-route chatbot
-(a strict-JSON tool-calling agent) in mobile/src/main/res/raw/recommended_models.json.
+Weekly: refresh the model menu for the phone app's AI running-route chatbot in
+mobile/src/main/res/raw/recommended_models.json.
 
-Each entry is self-describing (provider + OpenAI-compatible base_url + key page + model), so
-the menu can span providers. The CURRENT model proposes a best-first, DIVERSE shortlist; each
-candidate is VALIDATED with a live call against its real provider before it's written. The
-FIRST entry is the recommended default — we prefer keeping it on the current default provider
-so most users never need a new key; other entries can come from any provider (the app prompts
-for that provider's key if the user picks one).
+Policy: the DEFAULT (first entry) is ALWAYS a Google Gemini model, so a user's single
+Gemini key never breaks — an update can only move it to a newer *Gemini* model. The
+remaining entries are a DIVERSE set of the best free models from OTHER providers, offered
+as opt-in alternatives (the app prompts for that provider's key only if the user picks one).
+Every candidate is VALIDATED with a live call against its real provider before it's written.
 
 Standard library only; any error / no change -> changed=false (keep current).
 """
@@ -22,10 +21,8 @@ CONFIG = Path("mobile/src/main/res/raw/recommended_models.json")
 GH_TOKEN = os.environ.get("GH_MODELS_TOKEN", "").strip()
 GH_MODEL = os.environ.get("GH_MODEL", "openai/gpt-4.1")
 GH_BASE = "https://models.github.ai/inference"
-MAX_ENTRIES = 4
+MAX_ALTERNATIVES = 3
 
-# Candidate providers (OpenAI-compatible, free tier). The model picks among the ones we
-# hold a key for; each entry we write is self-describing.
 PROVIDERS = {
     "gemini": {"name": "Google Gemini", "base": "https://generativelanguage.googleapis.com/v1beta/openai",
                "key_url": "https://aistudio.google.com/app/apikey", "key_env": "GEMINI_API_KEY"},
@@ -73,37 +70,40 @@ def validate(base, key, model):
         return False
 
 
-PROMPT = """Curate the model menu for an automated RUNNING-ROUTE chatbot. It chats with the
-user, asks clarifying questions, and drives a STRICT JSON tool-calling loop (geocode, routing,
-elevation) — so models must be excellent at precise instruction / JSON following, and fast.
+def entry(pkey, model, label):
+    s = PROVIDERS[pkey]
+    return {"provider": s["name"], "base_url": s["base"], "key_url": s["key_url"], "model": model, "label": label}
 
-Return a DIVERSE, best-first shortlist of up to %(n)d FREE models drawn from these providers
-(we hold a key for each): %(providers)s
-- The FIRST entry is the recommended default — PREFER keeping it on "%(cur_default)s" so users'
-  keys keep working; only change the default if another is clearly better.
-- The remaining entries should span DIFFERENT providers / strengths (genuine variety, not
-  variants of one model).
+
+PROMPT = """Curate the model menu for an automated RUNNING-ROUTE chatbot (it chats, asks
+clarifying questions, and drives a STRICT JSON tool-calling loop). Models must be excellent
+at precise instruction / JSON following, and fast.
+
+The DEFAULT must ALWAYS be a Google Gemini model (we never change the default's provider, so
+users' keys keep working) — pick the best current FREE Gemini model.
+Then give up to %(n)d DIVERSE alternatives: the best FREE models from OTHER providers
+(%(others)s), spanning different strengths, as opt-in options.
 
 Current menu: %(current)s
 
 Respond with STRICT JSON only:
-{"models": [{"provider": "<one of: %(keys)s>", "model": "<exact id>", "label": "<short label incl. provider>"}]}
+{"default": {"model": "<gemini model id>", "label": "<short label>"},
+ "alternatives": [{"provider": "<one of: %(other_keys)s>", "model": "<id>", "label": "<label incl. provider>"}]}
 """.strip()
 
 
 def main():
     if not GH_TOKEN:
         stop("No GitHub Models token — skipping.")
+    if not os.environ.get(PROVIDERS["gemini"]["key_env"], "").strip():
+        stop("No Gemini key to validate the default — skipping.")  # default must stay Gemini
     current = json.loads(CONFIG.read_text()) if CONFIG.exists() else {"models": []}
     cur_models = current.get("models", [])
-    avail = {k: v for k, v in PROVIDERS.items() if os.environ.get(v["key_env"], "").strip()}
-    if not avail:
-        stop("No provider keys configured — skipping.")
+    others = {k: v for k, v in PROVIDERS.items() if k != "gemini" and os.environ.get(v["key_env"], "").strip()}
 
-    cur_default = (cur_models[0].get("provider") if cur_models else None) or "Google Gemini"
-    listing = "\n".join(f"- {k} ({v['name']})" for k, v in avail.items())
     prompt = PROMPT % {
-        "n": MAX_ENTRIES, "providers": listing, "keys": ", ".join(avail), "cur_default": cur_default,
+        "n": MAX_ALTERNATIVES, "others": ", ".join(f"{k} ({v['name']})" for k, v in others.items()) or "(none)",
+        "other_keys": ", ".join(others) or "none",
         "current": json.dumps([{"provider": m.get("provider"), "model": m.get("model")} for m in cur_models]),
     }
     try:
@@ -111,37 +111,46 @@ def main():
     except Exception as e:
         stop(f"Recommendation call failed ({e.__class__.__name__}) — keeping current.")
 
-    entries = []
-    seen = set()
-    for it in (rec.get("models") or [])[:MAX_ENTRIES + 2]:
+    gem = PROVIDERS["gemini"]
+    gkey = os.environ[gem["key_env"]].strip()
+    # Default: validated Gemini model, else keep the current Gemini default, else fallback.
+    d = rec.get("default") or {}
+    dmodel = str(d.get("model", "")).strip()
+    dlabel = str(d.get("label", "")).strip() or f"{dmodel} · recommended"
+    if not (dmodel and validate(gem["base"], gkey, dmodel)):
+        cur_default = cur_models[0] if cur_models and cur_models[0].get("provider") == gem["name"] else None
+        if cur_default:
+            dmodel, dlabel = cur_default["model"], cur_default.get("label", cur_default["model"])
+        else:
+            dmodel, dlabel = "gemini-2.5-flash", "Gemini 2.5 Flash · recommended"
+    entries = [entry("gemini", dmodel, dlabel)]
+
+    # Alternatives from other providers (diverse, validated).
+    seen = {dmodel}
+    for it in (rec.get("alternatives") or [])[:MAX_ALTERNATIVES + 2]:
         if not isinstance(it, dict):
             continue
         pkey = str(it.get("provider", "")).strip()
         model = str(it.get("model", "")).strip()
         label = str(it.get("label", "")).strip() or model
-        if pkey not in avail or not model or model in seen:
+        if pkey not in others or not model or model in seen:
             continue
-        spec = avail[pkey]
-        if validate(spec["base"], os.environ[spec["key_env"]].strip(), model):
-            entries.append({"provider": spec["name"], "base_url": spec["base"], "key_url": spec["key_url"],
-                            "model": model, "label": label})
+        s = others[pkey]
+        if validate(s["base"], os.environ[s["key_env"]].strip(), model):
+            entries.append(entry(pkey, model, label))
             seen.add(model)
             print(f"  validated {pkey}/{model}")
-            if len(entries) >= MAX_ENTRIES:
+            if len(entries) >= 1 + MAX_ALTERNATIVES:
                 break
         else:
             print(f"  dropped (failed validation) {pkey}/{model}")
 
-    if not entries:
-        stop("No recommended models validated — keeping current.")
     new = {"models": entries}
     if new == current:
         stop("Model menu unchanged — no update.")
-
     CONFIG.write_text(json.dumps(new, indent=2) + "\n")
-    switched = (cur_models[0].get("provider") if cur_models else None) != entries[0]["provider"]
-    emit(changed="true", default=entries[0]["provider"], switched=str(switched).lower())
-    print(f"Updated menu; default = {entries[0]['provider']} ({entries[0]['model']})")
+    emit(changed="true", default_model=dmodel)
+    print(f"Updated menu; default = Google Gemini / {dmodel}, {len(entries) - 1} alternative(s)")
 
 
 if __name__ == "__main__":
