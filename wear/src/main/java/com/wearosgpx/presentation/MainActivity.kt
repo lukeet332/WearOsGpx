@@ -633,6 +633,9 @@ private fun AmbientScreen(
 /** Navigation destinations, ordered by depth for slide-direction inference. */
 private enum class Screen { List, Preview, Activity, Finished, Settings }
 
+/** Neon green accent — shared with the phone companion for visual continuity. */
+private val Neon = Color(0xFF39FF14)
+
 /** Scrollable list of available GPX routes. */
 @Composable
 private fun RouteListScreen(
@@ -645,7 +648,7 @@ private fun RouteListScreen(
         state = rememberScalingLazyListState(),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        item { ListHeader { Text("Routes") } }
+        item { ListHeader { Text("Routes", color = Neon) } }
         if (routes.isEmpty()) {
             item { Text("Loading…", color = Color.White) }
         } else {
@@ -656,7 +659,7 @@ private fun RouteListScreen(
                         Text(route.name ?: "Route", maxLines = 1, overflow = TextOverflow.Ellipsis)
                     },
                     secondaryLabel = { Text("%.2f km".format(route.totalDistanceMeters / 1000)) },
-                    colors = ChipDefaults.secondaryChipColors(),
+                    colors = routeChipColors(),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -665,12 +668,26 @@ private fun RouteListScreen(
             Chip(
                 onClick = onOpenSettings,
                 label = { Text("Settings") },
-                colors = ChipDefaults.secondaryChipColors(),
+                colors = actionChipColors(),
                 modifier = Modifier.fillMaxWidth(),
             )
         }
     }
 }
+
+/** Route card colors mirror the phone: near-black card, white name, neon detail. */
+@Composable
+private fun routeChipColors() = ChipDefaults.chipColors(
+    backgroundColor = Color(0xFF161616),
+    contentColor = Color.White,
+    secondaryContentColor = Neon,
+)
+
+@Composable
+private fun actionChipColors() = ChipDefaults.chipColors(
+    backgroundColor = Color(0xFF2A2A2A),
+    contentColor = Neon,
+)
 
 /** Watch settings — currently the run-display power mode. */
 @Composable
@@ -682,7 +699,7 @@ private fun SettingsScreen(onBack: () -> Unit) {
         state = rememberScalingLazyListState(),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        item { ListHeader { Text("Run display") } }
+        item { ListHeader { Text("Run display", color = Neon) } }
         items(RunDisplayMode.entries) { option ->
             val selected = option == mode
             Chip(
@@ -694,7 +711,11 @@ private fun SettingsScreen(onBack: () -> Unit) {
                     Text((if (selected) "● " else "○ ") + option.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 },
                 secondaryLabel = { Text(option.blurb, maxLines = 3, overflow = TextOverflow.Ellipsis) },
-                colors = if (selected) ChipDefaults.primaryChipColors() else ChipDefaults.secondaryChipColors(),
+                colors = if (selected) {
+                    ChipDefaults.chipColors(backgroundColor = Neon, contentColor = Color.Black, secondaryContentColor = Color.Black)
+                } else {
+                    routeChipColors()
+                },
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -702,7 +723,7 @@ private fun SettingsScreen(onBack: () -> Unit) {
             Chip(
                 onClick = onBack,
                 label = { Text("Done") },
-                colors = ChipDefaults.secondaryChipColors(),
+                colors = actionChipColors(),
                 modifier = Modifier.fillMaxWidth(),
             )
         }
