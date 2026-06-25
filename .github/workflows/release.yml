@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The exact commit CI just greenlit (falls back to the branch on dispatch).
           ref: ${{ github.event.workflow_run.head_sha || github.ref }}
@@ -65,7 +65,7 @@ jobs:
         run: python .github/scripts/gemini_version.py
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
