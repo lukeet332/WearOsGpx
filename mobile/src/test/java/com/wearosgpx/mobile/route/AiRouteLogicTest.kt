@@ -2,6 +2,7 @@ package com.wearosgpx.mobile.route
 
 import com.wearosgpx.mobile.route.AiRouteLogic.Kind
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -34,6 +35,16 @@ class AiRouteLogicTest {
         val a = AiRouteLogic.parseAction("""{"action":"final","name":"Riverside 5k","reply":"Here you go!"}""")
         assertEquals(Kind.FINAL, a.kind)
         assertEquals("Riverside 5k", a.name)
+        assertNull(a.replace)   // a fresh route, not an update
+    }
+
+    @Test
+    fun parseAction_final_withReplaceIsAnUpdate() {
+        val a = AiRouteLogic.parseAction(
+            """{"action":"final","name":"Riverside 10k","replace":"riverside_5k.gpx"}"""
+        )
+        assertEquals(Kind.FINAL, a.kind)
+        assertEquals("riverside_5k.gpx", a.replace)
     }
 
     @Test
