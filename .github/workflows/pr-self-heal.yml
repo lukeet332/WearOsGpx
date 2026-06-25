@@ -16,6 +16,7 @@ permissions:
   contents: write
   pull-requests: write
   actions: read
+  models: read                  # GitHub Models inference via GITHUB_TOKEN
 
 concurrency:
   group: pr-self-heal-${{ github.event.workflow_run.head_branch }}
@@ -96,12 +97,14 @@ jobs:
           gh run view "$RUN_ID" --repo "$REPO" --log-failed > build-log.txt 2>&1 || true
           tail -c 61440 build-log.txt > build-log.trunc.txt || true
 
-      - name: Ask Gemini to fix the failure
+      - name: Ask the model to fix the failure
         if: startsWith(env.BRANCH, 'gemini/') && steps.guard.outputs.stop == 'false'
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GH_MODELS_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # GitHub Models auth (models:read)
+          GH_MODEL: openai/gpt-4.1                        # primary "heavy thinking" model
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}   # automatic fallback
           GEMINI_MODEL: gemini-2.5-flash
-        run: python .github/scripts/gemini_fix.py
+        run: python .github/scripts/ai_fix.py
 
       - name: Push the fix (re-runs CI) or report no fix
         if: startsWith(env.BRANCH, 'gemini/') && steps.guard.outputs.stop == 'false'
