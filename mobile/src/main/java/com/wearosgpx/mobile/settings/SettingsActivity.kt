@@ -127,32 +127,28 @@ private fun SettingsScreen(prompt: Boolean, onBack: () -> Unit) {
                 }
             }
 
-            // ---- AI provider (AI route generation) ----
+            // ---- AI route generation (single provider, kept fresh weekly) ----
             Spacer(Modifier.height(20.dp))
+            val aiConfig = remember { RecommendedModels.config(context) }
             KeyCard(
-                title = "AI provider",
-                status = if (aiKey.isBlank()) "Not set — needed for AI route generation"
-                else "✓ Key set · ${AppSettings.detectProvider(aiKey).name}",
+                title = "AI route generation",
+                status = if (aiKey.isBlank()) "Not set — paste your ${aiConfig.provider} key"
+                else "✓ ${aiConfig.provider} key set",
                 statusOk = aiKey.isNotBlank(),
-                blurb = "Powers describing a route in plain text (\"5k loop from here\"). " +
-                    "Recommended: Google Gemini Flash — free, fast, and with limits you're unlikely to " +
-                    "hit. Grab a free key from Google AI Studio and paste it below; we auto-detect the " +
-                    "provider. Any OpenAI-compatible key also works (OpenRouter, Groq, OpenAI).",
-                links = listOf(
-                    "Get a free Gemini key →" to "https://aistudio.google.com/app/apikey",
-                    "OpenRouter →" to "https://openrouter.ai/keys",
-                    "OpenAI →" to "https://platform.openai.com/api-keys",
-                ),
+                blurb = "Describe a route in plain text (\"5k loop from here\") and the AI plots it on " +
+                    "real roads. Uses ${aiConfig.provider} — free, fast, with limits you're unlikely to " +
+                    "hit. Grab a free key and paste it below; the model is kept up to date for you.",
+                links = listOf("Get a free ${aiConfig.provider} key →" to aiConfig.keyUrl),
                 onOpen = ::open,
             ) {
                 OutlinedTextField(
                     value = aiKey, onValueChange = { aiKey = it }, singleLine = true,
-                    label = { Text("Paste your AI API key") }, modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Paste your ${aiConfig.provider} API key") }, modifier = Modifier.fillMaxWidth(),
                 )
                 if (aiKey.isNotBlank()) {
                     Spacer(Modifier.height(10.dp))
                     Text("Model", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
-                    val options = RecommendedModels.forProvider(context, AppSettings.detectProvider(aiKey).id)
+                    val options = aiConfig.models
                     val recLabel = options.firstOrNull()?.label ?: "recommended"
                     var expanded by remember { mutableStateOf(false) }
                     val current =

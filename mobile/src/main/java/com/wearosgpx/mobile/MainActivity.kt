@@ -79,6 +79,7 @@ import com.wearosgpx.mobile.route.GeocodingService
 import com.wearosgpx.mobile.route.GpxMeta
 import com.wearosgpx.mobile.route.AiRouteActivity
 import com.wearosgpx.mobile.route.PhoneRouteStore
+import com.wearosgpx.mobile.route.RecommendedModels
 import com.wearosgpx.mobile.route.RouteCreatorActivity
 import com.wearosgpx.mobile.route.RouteDiscoveryService
 import com.wearosgpx.mobile.settings.AppSettings
@@ -258,10 +259,12 @@ class MainActivity : ComponentActivity() {
      */
     private fun promptForKeysOnce() {
         if (permissionFlowThisLaunch) return
-        val prefs = getSharedPreferences("perms", MODE_PRIVATE)
-        if (prefs.getBoolean("prompted_keys", false)) return
         if (!AppSettings.requiredKeysMissing(this)) return
-        prefs.edit().putBoolean("prompted_keys", true).apply()
+        // Prompt once per provider, so we re-prompt if the weekly review switched providers.
+        val provider = RecommendedModels.config(this).provider
+        val prefs = getSharedPreferences("perms", MODE_PRIVATE)
+        if (prefs.getString("prompted_keys_provider", "") == provider) return
+        prefs.edit().putString("prompted_keys_provider", provider).apply()
         startActivity(
             Intent(this, SettingsActivity::class.java)
                 .putExtra(SettingsActivity.EXTRA_PROMPT, true)
@@ -342,12 +345,13 @@ class MainActivity : ComponentActivity() {
         requestPermissions.launch(HealthConnectWriter.PERMISSIONS)
     }
 
-    /** Open AI route chat if an AI key is set, else send the user to Settings to add one. */
+    /** Open AI route chat if a key for the current provider is set, else go to Settings. */
     private fun onCreateAiClicked() {
-        if (AppSettings.hasAiKey(this)) {
+        if (!AppSettings.requiredKeysMissing(this)) {
             startActivity(Intent(this, AiRouteActivity::class.java))
         } else {
-            Toast.makeText(this, "Add an AI API key in Settings to use AI routes.", Toast.LENGTH_LONG).show()
+            val provider = RecommendedModels.config(this).provider
+            Toast.makeText(this, "Add your $provider API key in Settings to use AI routes.", Toast.LENGTH_LONG).show()
             startActivity(Intent(this, SettingsActivity::class.java).putExtra(SettingsActivity.EXTRA_PROMPT, true))
         }
     }
