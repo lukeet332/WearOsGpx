@@ -3,19 +3,20 @@
 Fix deprecated APIs / build & CI failures found in the Gradle/CI log and apply the
 changes to the working tree.
 
-The active model is read from `.github/ai_model.json` (provider, OpenAI-compatible
-base_url, model, and which env var holds its key). Default = GitHub Models GPT-4.1
-via the workflow GITHUB_TOKEN. The monthly `ai-model-review.yml` job can switch it to
-any OpenAI-compatible provider by editing that file. **Gemini stays as an automatic
-fallback** if the primary is unavailable.
+Two models are configured in `.github/ai_model.json`:
+  * primary  ("deep thinking") — the high code-quality model that does the work.
+  * fallback — used only if the primary errors / is rate-limited.
+Each is a {provider, model} pair; the provider's OpenAI-compatible base_url and key env
+var are resolved from the PROVIDERS registry below. The monthly `ai-model-review.yml`
+job re-evaluates BOTH and opens a PR if a change is warranted.
 
 Which model actually produced the fix is written to $GITHUB_OUTPUT (model_used,
 provider_used, bot_label) so the workflow can label the PR with the responsible bot.
 
-Safety (unchanged): standard library only; no-ops on missing creds / clean log /
-API failure; only OVERWRITES existing .kt/.kts/.toml files inside the repo (plus its
-own AI_CONTEXT.md note), path-traversal guarded. The workflow re-runs the tests
-afterwards, so a bad edit can never merge.
+Safety (unchanged): standard library only; no-ops on missing creds / clean log / API
+failure; only OVERWRITES existing .kt/.kts/.toml files inside the repo (plus its own
+AI_CONTEXT.md note), path-traversal guarded. The workflow re-runs the tests afterwards,
+so a bad edit can never merge.
 """
 import json
 import os
@@ -31,22 +32,19 @@ ALLOWED_SUFFIXES = (".kt", ".kts", ".toml")
 CONTEXT_FILE = (REPO / ".github" / "AI_CONTEXT.md").resolve()
 MODEL_CONFIG = (REPO / ".github" / "ai_model.json").resolve()
 
-# Known providers the bot may run on: name -> (OpenAI-compatible base_url, key env var).
-# To add a provider, add a row here and supply its key as the repo secret named below.
-# The monthly ai-model-review job may only switch to a provider whose key is configured.
+# Configured providers the bot may run on: name -> (OpenAI-compatible base_url, key env
+# var). The monthly ai-model-review job picks the best primary + fallback from THIS list.
+# To add a provider: add a row here and supply its key as the repo secret named below
+# (and pass it in the fix/review workflow env).
 PROVIDERS = {
     "github-models": ("https://models.github.ai/inference", "GH_MODELS_TOKEN"),
     "gemini":        ("https://generativelanguage.googleapis.com/v1beta/openai", "GEMINI_API_KEY"),
     "openrouter":    ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
     "groq":          ("https://api.groq.com/openai/v1", "GROQ_API_KEY"),
     "mistral":       ("https://api.mistral.ai/v1", "MISTRAL_API_KEY"),
-    "deepseek":      ("https://api.deepseek.com", "DEEPSEEK_API_KEY"),
 }
-DEFAULT_PROVIDER = "github-models"
-DEFAULT_MODEL = "openai/gpt-4.1"
-
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+DEFAULT_PRIMARY = {"provider": "github-models", "model": "openai/gpt-4.1"}
+DEFAULT_FALLBACK = {"provider": "gemini", "model": "gemini-2.5-flash"}
 
 
 def done(msg: str) -> None:
@@ -54,22 +52,35 @@ def done(msg: str) -> None:
     sys.exit(0)  # always succeed; "no changes" is a valid outcome
 
 
+def resolve(slot, default: dict) -> dict:
+    """{provider, model} -> {provider, model, base_url, api_key_env} via PROVIDERS."""
+    slot = slot if isinstance(slot, dict) else {}
+    provider = slot.get("provider")
+    if provider not in PROVIDERS:
+        provider = default["provider"]
+    model = slot.get("model")
+    if not (isinstance(model, str) and model.strip()):
+        model = default["model"]
+    base_url, api_key_env = PROVIDERS[provider]
+    return {"provider": provider, "model": model.strip(), "base_url": base_url, "api_key_env": api_key_env}
+
+
 def load_model_config() -> dict:
-    """Resolve {provider, model} from ai_model.json into {provider, model, base_url,
-    api_key_env} using the PROVIDERS registry. Unknown/missing -> the default."""
-    provider, model = DEFAULT_PROVIDER, DEFAULT_MODEL
+    """Read .github/ai_model.json -> {primary: {...resolved...}, fallback: {...}}.
+    Accepts the legacy flat {provider, model} shape as the primary."""
+    data = {}
     try:
         if MODEL_CONFIG.exists():
             data = json.loads(MODEL_CONFIG.read_text())
-            if isinstance(data.get("provider"), str) and data["provider"] in PROVIDERS:
-                provider = data["provider"]
-            if isinstance(data.get("model"), str) and data["model"].strip():
-                model = data["model"].strip()
     except Exception as e:
-        print(f"Could not read ai_model.json ({e.__class__.__name__}); using default model.")
-    base_url, api_key_env = PROVIDERS[provider]
-    return {"provider": provider, "model": model, "base_url": base_url, "api_key_env": api_key_env}
-    return cfg
+        print(f"Could not read ai_model.json ({e.__class__.__name__}); using defaults.")
+    primary = data.get("primary")
+    if not isinstance(primary, dict) and isinstance(data.get("provider"), str):
+        primary = {"provider": data.get("provider"), "model": data.get("model")}  # legacy flat shape
+    return {
+        "primary": resolve(primary, DEFAULT_PRIMARY),
+        "fallback": resolve(data.get("fallback"), DEFAULT_FALLBACK),
+    }
 
 
 def bot_label(model: str) -> str:
@@ -162,15 +173,15 @@ def _post(url: str, headers: dict, payload: dict) -> dict:
         return json.loads(resp.read())
 
 
-def call_openai_compatible(cfg: dict, prompt: str) -> dict:
-    """Any OpenAI-compatible /chat/completions provider (GitHub Models, Groq, Mistral,
-    OpenRouter, DeepSeek, Gemini's OpenAI endpoint, …)."""
-    key = os.environ.get(cfg["api_key_env"], "").strip()
+def call_openai_compatible(slot: dict, prompt: str) -> dict:
+    """Any OpenAI-compatible /chat/completions provider (GitHub Models, Gemini's OpenAI
+    endpoint, OpenRouter, Groq, Mistral, …)."""
+    key = os.environ.get(slot["api_key_env"], "").strip()
     if not key:
-        raise RuntimeError(f"no key in env {cfg['api_key_env']}")
-    url = cfg["base_url"].rstrip("/") + "/chat/completions"
+        raise RuntimeError(f"no key in env {slot['api_key_env']}")
+    url = slot["base_url"].rstrip("/") + "/chat/completions"
     data = _post(url, {"Authorization": f"Bearer {key}"}, {
-        "model": cfg["model"],
+        "model": slot["model"],
         "temperature": 0.1,
         "response_format": {"type": "json_object"},
         "messages": [{"role": "user", "content": prompt}],
@@ -178,37 +189,20 @@ def call_openai_compatible(cfg: dict, prompt: str) -> dict:
     return json.loads(data["choices"][0]["message"]["content"])
 
 
-def call_gemini(prompt: str) -> dict:
-    data = _post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
-        {"x-goog-api-key": GEMINI_KEY},
-        {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.1, "responseMimeType": "application/json"},
-        },
-    )
-    return json.loads(data["candidates"][0]["content"]["parts"][0]["text"])
-
-
-def get_fix(prompt: str) -> dict:
-    """Configured provider first; Gemini as fallback. None if all unavailable."""
+def get_fix(prompt: str):
+    """Try the primary model, then the fallback. None if both are unavailable."""
     cfg = load_model_config()
-    if os.environ.get(cfg["api_key_env"], "").strip():
+    for role in ("primary", "fallback"):
+        slot = cfg[role]
+        if not os.environ.get(slot["api_key_env"], "").strip():
+            continue
         try:
-            print(f"Asking {cfg['provider']} ({cfg['model']})…")
-            result = call_openai_compatible(cfg, prompt)
-            record_model(cfg["provider"], cfg["model"])
+            print(f"Asking {role}: {slot['provider']} ({slot['model']})…")
+            result = call_openai_compatible(slot, prompt)
+            record_model(slot["provider"], slot["model"])
             return result
         except Exception as e:
-            print(f"{cfg['provider']} unavailable ({e.__class__.__name__}); falling back to Gemini.")
-    if GEMINI_KEY:
-        try:
-            print(f"Asking Gemini ({GEMINI_MODEL})…")
-            result = call_gemini(prompt)
-            record_model("gemini", GEMINI_MODEL)
-            return result
-        except Exception as e:
-            print(f"Gemini unavailable ({e.__class__.__name__}).")
+            print(f"{role} {slot['provider']} unavailable ({e.__class__.__name__}).")
     return None
 
 
@@ -232,7 +226,7 @@ def apply_changes(result: dict) -> int:
 
 def main() -> None:
     cfg = load_model_config()
-    if not os.environ.get(cfg["api_key_env"], "").strip() and not GEMINI_KEY:
+    if not any(os.environ.get(cfg[r]["api_key_env"], "").strip() for r in ("primary", "fallback")):
         done("No model credentials available — skipping (no changes).")
     log = read_log()
     if not log or not re.search(r"warning:|error:|deprecat|FAILED|FAILURE|exception|unresolved", log, re.IGNORECASE):
@@ -242,7 +236,7 @@ def main() -> None:
         done("No referenced source files found in the log — nothing to do.")
     result = get_fix(build_prompt(log, files))
     if result is None:
-        done("All model providers unavailable — skipping (no changes).")
+        done("Primary and fallback models both unavailable — skipping (no changes).")
     print("Fix summary:", result.get("summary", "(none)"))
     done(f"Applied {apply_changes(result)} file change(s).")
 

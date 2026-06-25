@@ -1,5 +1,5 @@
 {
-  "provider": "github-models",
-  "model": "openai/gpt-4.1",
-  "_comment": "Active model for the AI fix bot. Edited by ai-model-review.yml (monthly self-assessment) via PR. 'provider' must be one of the known providers in .github/scripts/ai_fix.py PROVIDERS (github-models, gemini, openrouter, groq, mistral, deepseek); base_url + the key env var are resolved from there. The bot may only switch to a provider whose API key is configured as a repo secret."
+  "primary": { "provider": "github-models", "model": "openai/gpt-4.1" },
+  "fallback": { "provider": "gemini", "model": "gemini-2.5-flash" },
+  "_comment": "Models behind the AI fix bot. 'primary' is the deep-thinking model; 'fallback' runs only if the primary errors / is rate-limited. Each {provider, model}: 'provider' must be one of the PROVIDERS in .github/scripts/ai_fix.py (github-models, gemini, openrouter, groq, mistral) and base_url + key env are resolved from there. Edited by ai-model-review.yml (monthly) via PR — it re-evaluates BOTH roles and only changes one when warranted."
 }
