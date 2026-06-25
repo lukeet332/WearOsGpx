@@ -1,0 +1,21 @@
+{
+  "_comment": "Curated model options for AI route generation, per provider. First = recommended default. Kept fresh by the weekly app-model-review CI job; the app falls back to a built-in list if this is missing/invalid.",
+  "gemini": [
+    {"model": "gemini-2.5-flash", "label": "Gemini 2.5 Flash · recommended"},
+    {"model": "gemini-2.0-flash", "label": "Gemini 2.0 Flash · fast"},
+    {"model": "gemini-2.5-pro", "label": "Gemini 2.5 Pro · slower, smarter"}
+  ],
+  "openrouter": [
+    {"model": "deepseek/deepseek-chat-v3-0324:free", "label": "DeepSeek V3 · free"},
+    {"model": "meta-llama/llama-3.3-70b-instruct", "label": "Llama 3.3 70B"},
+    {"model": "openai/gpt-4o-mini", "label": "GPT-4o mini"}
+  ],
+  "groq": [
+    {"model": "llama-3.3-70b-versatile", "label": "Llama 3.3 70B"},
+    {"model": "llama-3.1-8b-instant", "label": "Llama 3.1 8B · fastest"}
+  ],
+  "openai": [
+    {"model": "gpt-4o-mini", "label": "GPT-4o mini"},
+    {"model": "gpt-4.1-mini", "label": "GPT-4.1 mini"}
+  ]
+}

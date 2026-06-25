@@ -8,6 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,7 +24,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -41,6 +45,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.wearosgpx.mobile.route.RecommendedModels
 import com.wearosgpx.mobile.strava.StravaClient
 
 private val Neon = Color(0xFF39FF14)
@@ -78,12 +83,14 @@ private fun SettingsScreen(prompt: Boolean, onBack: () -> Unit) {
     ) {
         var ors by remember { mutableStateOf(AppSettings.storedOrsKey(context)) }
         var aiKey by remember { mutableStateOf(AppSettings.aiKey(context)) }
+        var modelChoice by remember { mutableStateOf(AppSettings.storedAiModel(context)) }  // "" = auto/recommended
         var stravaConnected by remember { mutableStateOf(StravaClient.isConnected(context)) }
         val athlete = remember { StravaClient.connectedAthlete(context) }
 
         fun saveAll() {
             AppSettings.setOrsKey(context, ors)
             AppSettings.setAiKey(context, aiKey)
+            AppSettings.setAiModel(context, modelChoice)
             Toast.makeText(context, "Settings saved", Toast.LENGTH_SHORT).show()
         }
 
@@ -142,6 +149,33 @@ private fun SettingsScreen(prompt: Boolean, onBack: () -> Unit) {
                     value = aiKey, onValueChange = { aiKey = it }, singleLine = true,
                     label = { Text("Paste your AI API key") }, modifier = Modifier.fillMaxWidth(),
                 )
+                if (aiKey.isNotBlank()) {
+                    Spacer(Modifier.height(10.dp))
+                    Text("Model", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
+                    val options = RecommendedModels.forProvider(context, AppSettings.detectProvider(aiKey).id)
+                    val recLabel = options.firstOrNull()?.label ?: "recommended"
+                    var expanded by remember { mutableStateOf(false) }
+                    val current =
+                        if (modelChoice.isBlank()) "Auto · $recLabel"
+                        else options.find { it.model == modelChoice }?.label ?: modelChoice
+                    Box {
+                        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text(current, color = Neon)
+                        }
+                        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Auto · keep the recommended model") },
+                                onClick = { modelChoice = ""; expanded = false },
+                            )
+                            options.forEach { opt ->
+                                DropdownMenuItem(
+                                    text = { Text(opt.label) },
+                                    onClick = { modelChoice = opt.model; expanded = false },
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             // ---- OpenRouteService (routing) ----
