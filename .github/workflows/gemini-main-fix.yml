@@ -14,6 +14,7 @@ permissions:
   contents: write
   pull-requests: write
   actions: read
+  models: read                  # GitHub Models inference via GITHUB_TOKEN
 
 concurrency:
   group: gemini-main-fix
@@ -52,11 +53,13 @@ jobs:
             > build-log.txt 2>&1 || true
           tail -c 61440 build-log.txt > build-log.trunc.txt || true
 
-      - name: Ask Gemini to fix main
+      - name: Ask the model to fix main
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GH_MODELS_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # GitHub Models auth (models:read)
+          GH_MODEL: openai/gpt-4.1                        # primary "heavy thinking" model
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}   # automatic fallback
           GEMINI_MODEL: gemini-2.5-flash
-        run: python .github/scripts/gemini_fix.py
+        run: python .github/scripts/ai_fix.py
 
       # Opens a PR only if Gemini actually changed something. The PR is gated by CI
       # like any other; pr-self-heal.yml will iterate if the first try isn't enough.
@@ -73,9 +76,11 @@ jobs:
             **/*.kt
             **/*.kts
             gradle/libs.versions.toml
+            .github/AI_CONTEXT.md
           body: |
-            CI failed on **main**. Gemini (`gemini-2.5-flash`) analysed the failure log
-            and proposes this fix. It must pass CI before auto-merge; if the first
-            attempt is imperfect, `pr-self-heal.yml` will iterate (max 3).
+            CI failed on **main**. GitHub Models (`openai/gpt-4.1`, Gemini fallback)
+            analysed the failure log and proposes this fix. It must pass CI before
+            auto-merge; if the first attempt is imperfect, `pr-self-heal.yml` will
+            iterate (max 3).
 
-            Review before trusting — Gemini can be wrong.
+            Review before trusting — the model can be wrong.

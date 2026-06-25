@@ -1,17 +1,19 @@
-name: Gemini maintenance
+name: AI maintenance
 
-# Weekly AI housekeeping: capture the Gradle lint/compile logs, ask Gemini to fix
-# deprecated Jetpack Compose / Kotlin APIs and obvious bugs, RE-RUN THE TESTS to
-# prove the change is safe, then open a PR. The PR still has to pass the CI gate
-# before auto-merge — Gemini never merges unverified code.
+# AI housekeeping (twice a week): capture the Gradle lint/compile logs, ask the model
+# to fix deprecated Jetpack Compose / Kotlin APIs and obvious bugs, RE-RUN THE TESTS to
+# prove the change is safe, then open a PR. The PR still has to pass the CI gate before
+# auto-merge — the bot never merges unverified code. The "heavy thinking" runs on
+# GitHub Models (GPT-4.1) via GITHUB_TOKEN (models:read), with Gemini as a fallback.
 on:
   schedule:
-    - cron: '0 6 * * 1'        # 06:00 UTC every Monday
+    - cron: '0 6 * * 1,4'      # 06:00 UTC every Monday and Thursday
   workflow_dispatch:            # allow manual runs
 
 permissions:
   contents: write
   pull-requests: write
+  models: read                  # GitHub Models inference via GITHUB_TOKEN
 
 concurrency:
   group: gemini-maintenance
@@ -49,11 +51,13 @@ jobs:
           # Keep the prompt small: last 60 KB of the log only.
           tail -c 61440 build-log.txt > build-log.trunc.txt || true
 
-      - name: Ask Gemini to propose fixes
+      - name: Ask the model to propose fixes
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: gemini-2.5-flash      # free-tier Flash model
-        run: python .github/scripts/gemini_fix.py
+          GH_MODELS_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # GitHub Models auth (models:read)
+          GH_MODEL: openai/gpt-4.1                        # primary "heavy thinking" model
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}   # automatic fallback
+          GEMINI_MODEL: gemini-2.5-flash
+        run: python .github/scripts/ai_fix.py
 
       # Hard gate: the proposed changes must still pass our unit tests, or we abort
       # (no PR). This is what makes an autonomous bot safe.
@@ -75,14 +79,15 @@ jobs:
             **/*.kt
             **/*.kts
             gradle/libs.versions.toml
+            .github/AI_CONTEXT.md
           body: |
-            Automated maintenance proposed by **Gemini** (`${{ env.GEMINI_MODEL }}`) from the weekly run.
+            Automated maintenance proposed by **GitHub Models** (`openai/gpt-4.1`, Gemini
+            fallback) from the twice-weekly run.
 
             - Source: Gradle lint + `compileDebugKotlin` logs.
             - These changes already passed `:mobile:testDebugUnitTest` + `:wear:testDebugUnitTest`
               in this job; the PR must also pass the **CI** check before auto-merge.
             - If nothing needed fixing, no PR is opened.
+            - May append a learning to `.github/AI_CONTEXT.md` — review that too.
 
-            Review the diff before trusting it — Gemini can be wrong.
-        env:
-          GEMINI_MODEL: gemini-2.5-flash
+            Review the diff before trusting it — the model can be wrong.
