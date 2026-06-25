@@ -77,6 +77,7 @@ import com.wearosgpx.mobile.route.BaseMap
 import com.wearosgpx.mobile.route.BaseMapService
 import com.wearosgpx.mobile.route.GeocodingService
 import com.wearosgpx.mobile.route.GpxMeta
+import com.wearosgpx.mobile.route.AiRouteActivity
 import com.wearosgpx.mobile.route.PhoneRouteStore
 import com.wearosgpx.mobile.route.RouteCreatorActivity
 import com.wearosgpx.mobile.route.RouteDiscoveryService
@@ -148,6 +149,7 @@ class MainActivity : ComponentActivity() {
                 onOpenSettings = { startActivity(Intent(this, SettingsActivity::class.java)) },
                 onImport = { pickGpx.launch(arrayOf("application/gpx+xml", "application/xml", "text/xml", "application/octet-stream")) },
                 onCreate = { startActivity(Intent(this, RouteCreatorActivity::class.java)) },
+                onCreateAi = ::onCreateAiClicked,
                 onDelete = ::deleteRoute,
                 onShare = ::shareRoute,
                 onSendToWatch = ::sendToWatch,
@@ -340,6 +342,16 @@ class MainActivity : ComponentActivity() {
         requestPermissions.launch(HealthConnectWriter.PERMISSIONS)
     }
 
+    /** Open AI route chat if an AI key is set, else send the user to Settings to add one. */
+    private fun onCreateAiClicked() {
+        if (AppSettings.hasAiKey(this)) {
+            startActivity(Intent(this, AiRouteActivity::class.java))
+        } else {
+            Toast.makeText(this, "Add an AI API key in Settings to use AI routes.", Toast.LENGTH_LONG).show()
+            startActivity(Intent(this, SettingsActivity::class.java).putExtra(SettingsActivity.EXTRA_PROMPT, true))
+        }
+    }
+
     private fun refreshHealthConnect() {
         val writer = HealthConnectWriter(this)
         hcAvailable.value = writer.isAvailable()
@@ -493,6 +505,7 @@ private fun CompanionApp(
     onOpenSettings: () -> Unit,
     onImport: () -> Unit,
     onCreate: () -> Unit,
+    onCreateAi: () -> Unit,
     onDelete: (RouteRow) -> Unit,
     onShare: (RouteRow) -> Unit,
     onSendToWatch: (RouteRow) -> Unit,
@@ -551,6 +564,12 @@ private fun CompanionApp(
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = Neon, contentColor = Color.Black),
             ) { Text("Create route on map", fontWeight = FontWeight.SemiBold) }
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = onCreateAi,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A), contentColor = Neon),
+            ) { Text("✨ Create route with AI", fontWeight = FontWeight.SemiBold) }
             Spacer(Modifier.height(8.dp))
             Button(
                 onClick = { showDiscover = true },

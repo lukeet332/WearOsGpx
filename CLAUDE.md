@@ -83,6 +83,13 @@ structures explicitly (services, manifests, Gradle, Compose), don't assume Andro
   (e.g. `presentation/Formatting.kt`, `health/HealthConnectPrep.kt`; `BaseMapService.classify/simplify`
   and `RouteDiscoveryService.assemble` are `internal` for this). Add a test whenever you change a
   threshold/format.
+- **New features:** add a **bang-for-buck** deterministic unit test for a new feature's pure,
+  regression-prone logic (math, parsing, format, state transitions) so it lands in the **CI gate** —
+  extract that logic out of the UI/Activity/Service into a pure unit if needed. Prefer **TDD where
+  practical**: write the failing test for that pure unit first, then implement to green. Stay pragmatic:
+  skip tests that would be **flaky or low value** (UI/Compose, network, Data Layer, device-only behaviour)
+  or that only exercise trivial glue. A small, reliable test that guards real logic > a brittle one
+  chasing coverage.
 - **Covered:** wear — `GeoUtils` (distance/bearing), `RouteNavigator` (off-course 40/25 hysteresis,
   progress, 50° "proper bend" turn threshold), `Formatting` (pace/elapsed/distance), `RouteProjector`
   (fit/centered projection), `GpxRoute` (distance/ascent). mobile — `HealthConnectPrep` (dedupe dup

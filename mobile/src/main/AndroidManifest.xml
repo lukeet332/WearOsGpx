@@ -101,6 +101,12 @@
             android:label="Settings"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
 
+        <activity
+            android:name=".route.AiRouteActivity"
+            android:exported="false"
+            android:label="AI route"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="com.wearosgpx.fileprovider"

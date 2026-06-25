@@ -11,9 +11,10 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Snaps a list of waypoints to a road/path-following route via OpenRouteService
- * (foot-walking profile). Input/output points are (lat, lon). Returns null if no
- * key is set or the request fails, so the caller can fall back to straight lines.
+ * Road/path-following routing via OpenRouteService (foot-walking). All points are
+ * (lat, lon). Returns null if no key is set or the request fails so callers can fall
+ * back. [route] snaps a sequence of waypoints; [roundTrip] generates a loop of ~a
+ * target length from a single start (used by AI route generation for "5k loop from here").
  */
 object RoutingService {
 
@@ -32,27 +33,47 @@ object RoutingService {
                 """"preference":"fastest",""" +
                 """"options":{"avoid_features":["steps","fords"]},""" +
                 """"instructions":false}"""
-
-            runCatching {
-                val conn = (URL(ENDPOINT).openConnection() as HttpURLConnection).apply {
-                    requestMethod = "POST"
-                    setRequestProperty("Authorization", apiKey)
-                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                    setRequestProperty("Accept", "application/geo+json")
-                    doOutput = true
-                    connectTimeout = 15_000
-                    readTimeout = 15_000
-                }
-                conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
-                val body = conn.inputStream.bufferedReader().use { it.readText() }
-                json.parseToJsonElement(body).jsonObject["features"]
-                    ?.jsonArray?.firstOrNull()?.jsonObject
-                    ?.get("geometry")?.jsonObject
-                    ?.get("coordinates")?.jsonArray
-                    ?.map { pair ->
-                        val a = pair.jsonArray
-                        a[1].jsonPrimitive.double to a[0].jsonPrimitive.double  // -> (lat, lon)
-                    }
-            }.getOrNull()
+            runCatching { post(payload, apiKey) }.getOrNull()
         }
+
+    /**
+     * A round-trip loop of roughly [lengthMeters], starting and ending at [start]. ORS
+     * shapes the loop itself; [seed] varies its direction/shape so the agent can offer an
+     * alternative if asked. Returns the (lat, lon) geometry, or null on failure.
+     */
+    suspend fun roundTrip(
+        start: Pair<Double, Double>,
+        lengthMeters: Double,
+        apiKey: String,
+        seed: Int = 1,
+    ): List<Pair<Double, Double>>? = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank() || lengthMeters < 200) return@withContext null
+        val payload = """{"coordinates":[[${start.second},${start.first}]],""" +
+            """"options":{"round_trip":{"length":${lengthMeters.toInt()},"points":5,"seed":$seed}},""" +
+            """"instructions":false}"""
+        runCatching { post(payload, apiKey) }.getOrNull()
+    }
+
+    /** POST a directions payload and parse the GeoJSON geometry into (lat, lon) points. */
+    private fun post(payload: String, apiKey: String): List<Pair<Double, Double>>? {
+        val conn = (URL(ENDPOINT).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            setRequestProperty("Authorization", apiKey)
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            setRequestProperty("Accept", "application/geo+json")
+            doOutput = true
+            connectTimeout = 15_000
+            readTimeout = 20_000
+        }
+        conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+        val body = conn.inputStream.bufferedReader().use { it.readText() }
+        return json.parseToJsonElement(body).jsonObject["features"]
+            ?.jsonArray?.firstOrNull()?.jsonObject
+            ?.get("geometry")?.jsonObject
+            ?.get("coordinates")?.jsonArray
+            ?.map { pair ->
+                val a = pair.jsonArray
+                a[1].jsonPrimitive.double to a[0].jsonPrimitive.double  // -> (lat, lon)
+            }
+    }
 }
