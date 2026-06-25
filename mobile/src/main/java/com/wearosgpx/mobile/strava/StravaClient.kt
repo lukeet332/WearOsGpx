@@ -3,6 +3,7 @@ package com.wearosgpx.mobile.strava
 import android.content.Context
 import android.util.Log
 import com.wearosgpx.mobile.BuildConfig
+import com.wearosgpx.mobile.route.GpxBuilder
 import com.wearosgpx.mobile.sync.RunPayload
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -33,12 +34,15 @@ object StravaClient {
     private const val KEY_REFRESH = "refresh_token"
     private const val KEY_EXPIRES = "expires_at"        // epoch seconds
     private const val KEY_ATHLETE = "athlete"
+    private const val KEY_ATHLETE_ID = "athlete_id"
     private const val KEY_UPLOADED = "uploaded_starts"
 
     // Custom-scheme redirect. The Strava API app's "Authorization Callback Domain"
     // must be set to `localhost` (Strava matches on host only, ignoring the scheme).
     const val REDIRECT_URI = "wearosgpx://localhost"
-    private const val SCOPE = "activity:write,read"
+    // write = upload finished runs; read_all + activity:read_all = read the user's own
+    // (incl. private) routes and activities so we can import them as routes.
+    private const val SCOPE = "activity:write,activity:read_all,read_all"
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -67,7 +71,7 @@ object StravaClient {
 
     fun disconnect(context: Context) {
         prefs(context).edit().remove(KEY_ACCESS).remove(KEY_REFRESH)
-            .remove(KEY_EXPIRES).remove(KEY_ATHLETE).apply()
+            .remove(KEY_EXPIRES).remove(KEY_ATHLETE).remove(KEY_ATHLETE_ID).apply()
     }
 
     /** Exchange the OAuth `code` from the redirect for tokens. Returns success. */
@@ -84,7 +88,8 @@ object StravaClient {
                 athlete?.get("firstname")?.jsonPrimitive?.contentOrNull,
                 athlete?.get("lastname")?.jsonPrimitive?.contentOrNull,
             ).joinToString(" ").ifBlank { "Strava" }
-            prefs(context).edit().putString(KEY_ATHLETE, name).apply()
+            val athleteId = athlete?.get("id")?.jsonPrimitive?.longOrNull ?: 0L
+            prefs(context).edit().putString(KEY_ATHLETE, name).putLong(KEY_ATHLETE_ID, athleteId).apply()
             Log.i(TAG, "Connected to Strava as $name")
             true
         }.getOrElse { Log.e(TAG, "Token exchange failed", it); false }
@@ -109,6 +114,49 @@ object StravaClient {
             uploadId
         }.getOrElse { Log.e(TAG, "[$trigger] Strava upload failed for run $key", it); null }
     }
+
+    // --- reading the user's own routes / activities (for import) ---
+
+    /** The authenticated athlete's saved routes (newest first), or null if not reachable. */
+    suspend fun listRoutes(context: Context): List<StravaParse.Item>? = withContext(Dispatchers.IO) {
+        val token = validAccessToken(context) ?: return@withContext null
+        val id = athleteId(context) ?: return@withContext null
+        runCatching {
+            StravaParse.routes(httpGet("https://www.strava.com/api/v3/athletes/$id/routes?per_page=50", token))
+        }.getOrElse { Log.e(TAG, "listRoutes failed", it); null }
+    }
+
+    /** The athlete's recent activities that have GPS (newest first), or null if not reachable. */
+    suspend fun listActivities(context: Context): List<StravaParse.Item>? = withContext(Dispatchers.IO) {
+        val token = validAccessToken(context) ?: return@withContext null
+        runCatching {
+            StravaParse.activities(httpGet("https://www.strava.com/api/v3/athlete/activities?per_page=30", token))
+        }.getOrElse { Log.e(TAG, "listActivities failed", it); null }
+    }
+
+    /** Export a saved route as GPX bytes (Strava builds the GPX for us). */
+    suspend fun routeGpx(context: Context, routeId: Long): ByteArray? = withContext(Dispatchers.IO) {
+        val token = validAccessToken(context) ?: return@withContext null
+        runCatching {
+            httpGetBytes("https://www.strava.com/api/v3/routes/$routeId/export_gpx", token)
+        }.getOrElse { Log.e(TAG, "routeGpx failed", it); null }
+    }
+
+    /** Build a GPX from an activity's GPS stream; null if it has no usable track. */
+    suspend fun activityGpx(context: Context, activityId: Long, name: String): String? = withContext(Dispatchers.IO) {
+        val token = validAccessToken(context) ?: return@withContext null
+        runCatching {
+            val resp = httpGet(
+                "https://www.strava.com/api/v3/activities/$activityId/streams?keys=latlng&key_by_type=true",
+                token,
+            )
+            val pts = StravaParse.latLng(resp)
+            if (pts.size < 2) null else GpxBuilder.build(name, pts)
+        }.getOrElse { Log.e(TAG, "activityGpx failed", it); null }
+    }
+
+    private fun athleteId(context: Context): Long? =
+        prefs(context).getLong(KEY_ATHLETE_ID, 0L).takeIf { it > 0 }
 
     // --- token management ---
 
@@ -182,6 +230,28 @@ object StravaClient {
         }
         val resp = readResponse(conn)
         return json.parseToJsonElement(resp).jsonObject["id"]?.jsonPrimitive?.longOrNull ?: -1L
+    }
+
+    private fun httpGet(url: String, token: String): String {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 15_000
+            readTimeout = 20_000
+            setRequestProperty("Authorization", "Bearer $token")
+        }
+        return readResponse(conn)
+    }
+
+    private fun httpGetBytes(url: String, token: String): ByteArray {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 15_000
+            readTimeout = 20_000
+            setRequestProperty("Authorization", "Bearer $token")
+        }
+        val code = conn.responseCode
+        if (code !in 200..299) throw RuntimeException("HTTP $code: ${conn.errorStream?.bufferedReader()?.use { it.readText() }}")
+        return conn.inputStream.use { it.readBytes() }
     }
 
     private fun readResponse(conn: HttpURLConnection): String {

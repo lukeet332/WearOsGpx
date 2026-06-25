@@ -200,8 +200,8 @@ private fun SettingsScreen(prompt: Boolean, onBack: () -> Unit) {
                     Text("Strava (optional)", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        if (stravaConnected) "✓ Connected${athlete?.let { " · $it" } ?: ""}. Finished runs upload automatically."
-                        else "Auto-upload finished runs to Strava too. Your primary sync is Health Connect (read by Samsung Health) — Strava is an extra.",
+                        if (stravaConnected) "✓ Connected${athlete?.let { " · $it" } ?: ""}. Finished runs upload automatically, and you can import your own Strava routes & runs as routes (on the home screen). If Import doesn't appear, reconnect to grant read access."
+                        else "Auto-upload finished runs to Strava, and import your own Strava routes & past runs as routes (e.g. reuse a parkrun you've done). Your primary sync is still Health Connect — Strava is an extra.",
                         color = if (stravaConnected) Color(0xFFFC4C02) else Color.White.copy(alpha = 0.7f),
                         fontSize = 13.sp,
                     )

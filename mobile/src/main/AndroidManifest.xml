@@ -108,6 +108,12 @@
             android:label="AI route"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
 
+        <activity
+            android:name=".strava.StravaImportActivity"
+            android:exported="false"
+            android:label="Import from Strava"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="com.wearosgpx.fileprovider"
