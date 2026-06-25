@@ -1,0 +1,68 @@
+name: AI model self-review
+
+# Every week, ask the current deep-thinking model which model is best *today* for BOTH
+# roles of the fix bot — primary (deep thinking) and fallback — chosen only from the
+# configured providers (ai_fix.PROVIDERS). If a change to either is warranted, validate
+# it with a live call and open a PR editing .github/ai_model.json. Because the choice is
+# limited to configured, validated providers, the switch auto-merges once CI passes. To
+# widen the menu, add a provider key as a repo secret below + a row in ai_fix.PROVIDERS.
+on:
+  schedule:
+    - cron: '0 7 * * 1'        # 07:00 UTC every Monday
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  models: read                  # GitHub Models inference via GITHUB_TOKEN
+
+concurrency:
+  group: ai-model-review
+  cancel-in-progress: false
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with: { python-version: '3.12' }
+
+      - name: Assess best primary + fallback & update config if better
+        id: review
+        env:
+          GH_MODELS_TOKEN: ${{ secrets.GITHUB_TOKEN }}       # GitHub Models (default, free)
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+        run: python .github/scripts/ai_model_review.py
+
+      # Only opens a PR if a change is warranted. Auto-merges: the chosen model(s) are
+      # configured providers that passed a live validation call, and CI still gates it.
+      - name: Open model-switch PR
+        if: steps.review.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.BOT_PAT }}
+          branch: ai/model-review
+          delete-branch: true
+          add-paths: .github/ai_model.json
+          commit-message: "ci: update fix model(s) — ${{ steps.review.outputs.changed_roles }}"
+          title: "🤖 Update fix model(s): ${{ steps.review.outputs.changed_roles }}"
+          labels: automerge
+          body: |
+            Weekly automated model self-assessment — re-evaluated both roles.
+
+            - **Primary (deep thinking):** `${{ steps.review.outputs.primary }}`
+            - **Fallback:** `${{ steps.review.outputs.fallback }}`
+            - **Changed:** ${{ steps.review.outputs.changed_roles }}
+
+            **Reasoning:** ${{ steps.review.outputs.reason }}
+
+            The new model(s) were chosen from configured providers and passed a live
+            validation call, so this auto-merges once CI (`assembleDebug` + unit tests) is
+            green. Future fix PRs are labelled with the model that ran. Revert any time by
+            editing `.github/ai_model.json`.

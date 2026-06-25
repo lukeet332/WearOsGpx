@@ -2,7 +2,7 @@ name: CI
 
 # Fast, stable JVM unit tests. On PRs it's the required merge gate; on main it's a
 # health monitor (free minutes on public repos) — and if main ever goes red,
-# gemini-main-fix.yml debugs it and opens a fix PR. No emulator/instrumented tests.
+# ai-main-fix.yml debugs it and opens a fix PR. No emulator/instrumented tests.
 on:
   pull_request:
     branches: [ main ]

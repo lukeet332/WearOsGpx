@@ -2,8 +2,8 @@ name: PR self-heal & cleanup
 
 # Reacts to a FAILED CI run on a PR. Runs from main via workflow_run, so it has full
 # secret access even for Dependabot PRs (whose own runs don't). Two behaviours:
-#   * gemini/** branches  → ask Gemini to fix the failure, push to the PR (re-runs CI),
-#                           capped at 3 attempts, then give up + drop auto-merge.
+#   * ai-fix(<model>)/** branches → ask the AI fix bot to fix the failure, push to the PR
+#                           (re-runs CI), capped at 3 attempts, then give up + drop auto-merge.
 #   * dependabot/** branches → close the PR (it can't merge anyway under branch
 #                           protection; dependency failures aren't code-fixable, and
 #                           the bad ones are pinned in dependabot.yml).
@@ -53,9 +53,9 @@ jobs:
             "🤖 Closing — CI failed, so this dependency update can't merge (branch protection). If it becomes compatible, Dependabot will reopen it; otherwise it's pinned in \`.github/dependabot.yml\`."
           gh pr close "${{ steps.pr.outputs.number }}" --repo "$REPO" --delete-branch
 
-      # ---- Gemini branch: self-heal loop ----
+      # ---- AI fix branch: self-heal loop ----
       - name: Checkout the PR branch
-        if: startsWith(env.BRANCH, 'gemini/') && steps.pr.outputs.number != ''
+        if: startsWith(env.BRANCH, 'ai-fix(') && steps.pr.outputs.number != ''
         uses: actions/checkout@v7
         with:
           ref: ${{ github.event.workflow_run.head_branch }}
@@ -64,33 +64,33 @@ jobs:
 
       - name: Attempt guard (max 3 self-heal commits)
         id: guard
-        if: startsWith(env.BRANCH, 'gemini/') && steps.pr.outputs.number != ''
+        if: startsWith(env.BRANCH, 'ai-fix(') && steps.pr.outputs.number != ''
         run: |
-          N=$(git log --pretty=format:'%s' | grep -c '\[gemini-pr-fix\]' || true)
+          N=$(git log --pretty=format:'%s' | grep -c '\[ai-pr-fix\]' || true)
           echo "prior self-heal commits: $N"
           if [ "$N" -ge 3 ]; then echo "stop=true" >> "$GITHUB_OUTPUT"; else echo "stop=false" >> "$GITHUB_OUTPUT"; fi
 
       - name: Give up after 3 attempts
-        if: startsWith(env.BRANCH, 'gemini/') && steps.guard.outputs.stop == 'true'
+        if: startsWith(env.BRANCH, 'ai-fix(') && steps.guard.outputs.stop == 'true'
         env:
           GH_TOKEN: ${{ secrets.BOT_PAT }}
         run: |
           gh pr comment "${{ steps.pr.outputs.number }}" --repo "$REPO" --body \
-            "🤖 Gemini tried 3× but CI still fails — needs a human. Removed the auto-merge label."
+            "🤖 The AI fix bot tried 3× but CI still fails — needs a human. Removed the auto-merge label."
           gh pr edit "${{ steps.pr.outputs.number }}" --repo "$REPO" --remove-label automerge || true
 
       - name: Set up JDK 17
-        if: startsWith(env.BRANCH, 'gemini/') && steps.guard.outputs.stop == 'false'
+        if: startsWith(env.BRANCH, 'ai-fix(') && steps.guard.outputs.stop == 'false'
         uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: '17', cache: gradle }
 
       - name: Set up Python
-        if: startsWith(env.BRANCH, 'gemini/') && steps.guard.outputs.stop == 'false'
+        if: startsWith(env.BRANCH, 'ai-fix(') && steps.guard.outputs.stop == 'false'
         uses: actions/setup-python@v5
         with: { python-version: '3.12' }
 
       - name: Fetch the CI failure log
-        if: startsWith(env.BRANCH, 'gemini/') && steps.guard.outputs.stop == 'false'
+        if: startsWith(env.BRANCH, 'ai-fix(') && steps.guard.outputs.stop == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -98,25 +98,32 @@ jobs:
           tail -c 61440 build-log.txt > build-log.trunc.txt || true
 
       - name: Ask the model to fix the failure
-        if: startsWith(env.BRANCH, 'gemini/') && steps.guard.outputs.stop == 'false'
+        id: fix
+        if: startsWith(env.BRANCH, 'ai-fix(') && steps.guard.outputs.stop == 'false'
         env:
-          GH_MODELS_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # GitHub Models auth (models:read)
-          GH_MODEL: openai/gpt-4.1                        # primary "heavy thinking" model
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}   # automatic fallback
-          GEMINI_MODEL: gemini-2.5-flash
-        run: python .github/scripts/ai_fix.py
+          GH_MODELS_TOKEN: ${{ secrets.GITHUB_TOKEN }}    # GitHub Models auth (models:read)
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+        run: python .github/scripts/ai_fix.py             # active model from .github/ai_model.json
+
+      - name: Auto-format the changed Kotlin (ktlint)
+        if: startsWith(env.BRANCH, 'ai-fix(') && steps.guard.outputs.stop == 'false'
+        run: bash .github/scripts/format_changed.sh
 
       - name: Push the fix (re-runs CI) or report no fix
-        if: startsWith(env.BRANCH, 'gemini/') && steps.guard.outputs.stop == 'false'
+        if: startsWith(env.BRANCH, 'ai-fix(') && steps.guard.outputs.stop == 'false'
         env:
           GH_TOKEN: ${{ secrets.BOT_PAT }}
+          BOT: ${{ steps.fix.outputs.bot_label || 'ai-bot' }}
         run: |
           if git diff --quiet; then
             gh pr comment "${{ steps.pr.outputs.number }}" --repo "$REPO" --body \
-              "🤖 Gemini had no safe fix for this CI failure."
+              "🤖 $BOT had no safe fix for this CI failure."
             exit 0
           fi
-          git config user.name "gemini-bot"
-          git config user.email "gemini-bot@users.noreply.github.com"
-          git commit -am "fix: address CI failure [gemini-pr-fix]"
+          git config user.name "$BOT"
+          git config user.email "ai-fix-bot@users.noreply.github.com"
+          git commit -am "fix: address CI failure ($BOT) [ai-pr-fix]"
           git push origin "HEAD:$BRANCH"
