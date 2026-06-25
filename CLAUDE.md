@@ -73,6 +73,23 @@ structures explicitly (services, manifests, Gradle, Compose), don't assume Andro
   shift the row; icons are `res/drawable/ic_stat_*` vectors; block lifted off the bottom so the round
   screen doesn't clip the columns.
 
+## Testing
+
+- **JVM unit tests** (JUnit4, no Android/Robolectric): `./gradlew :wear:testDebugUnitTest :mobile:testDebugUnitTest`.
+  34 deterministic tests guard the **pure, regression-prone logic** we keep tuning.
+- **Convention:** keep tests pure and deterministic — NO UI (Compose), GPX-parsing (`android.util.Xml`),
+  network (Overpass/Nominatim/ORS), Data Layer, or Health Connect client tests (flaky / need a device).
+  When risky logic lives inside an Activity/Service/UI, **extract it into a pure unit and test that**
+  (e.g. `presentation/Formatting.kt`, `health/HealthConnectPrep.kt`; `BaseMapService.classify/simplify`
+  and `RouteDiscoveryService.assemble` are `internal` for this). Add a test whenever you change a
+  threshold/format.
+- **Covered:** wear — `GeoUtils` (distance/bearing), `RouteNavigator` (off-course 40/25 hysteresis,
+  progress, 50° "proper bend" turn threshold), `Formatting` (pace/elapsed/distance), `RouteProjector`
+  (fit/centered projection), `GpxRoute` (distance/ascent). mobile — `HealthConnectPrep` (dedupe dup
+  timestamps + HR 1..300 clamp/drop — the past sync bug), `BaseMapService` (OSM classify + Douglas–Peucker),
+  `RouteDiscoveryService.assemble` (way chaining/flip), `GpxBuilder` + `StravaActivityGpx` (GPX output:
+  time + `gpxtpx:hr`).
+
 ## Phased plan
 
 1. ✅ GPX parser + Room data layer
