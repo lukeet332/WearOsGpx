@@ -1,0 +1,36 @@
+version: 2
+updates:
+  # --- Android / Kotlin / Wear OS dependencies (via the Gradle version catalog) ---
+  - package-ecosystem: gradle
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 10
+    # NOTE: no "automerge" label here on purpose — Dependabot PRs are auto-merged by
+    # actor in auto-merge.yml, which deliberately skips MAJOR version bumps.
+    labels: ["dependencies"]
+    commit-message:
+      prefix: "deps"
+    groups:
+      androidx:
+        patterns: ["androidx.*"]
+      kotlin-ksp:
+        patterns:
+          - "org.jetbrains.kotlin*"
+          - "com.google.devtools.ksp*"
+          - "org.jetbrains.kotlinx*"
+      compose:
+        patterns: ["androidx.compose*", "androidx.wear.compose*"]
+
+  # --- GitHub Actions used by the workflows themselves ---
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    labels: ["dependencies", "github-actions"]
+    commit-message:
+      prefix: "ci"

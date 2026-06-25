@@ -1,0 +1,88 @@
+name: Gemini maintenance
+
+# Weekly AI housekeeping: capture the Gradle lint/compile logs, ask Gemini to fix
+# deprecated Jetpack Compose / Kotlin APIs and obvious bugs, RE-RUN THE TESTS to
+# prove the change is safe, then open a PR. The PR still has to pass the CI gate
+# before auto-merge — Gemini never merges unverified code.
+on:
+  schedule:
+    - cron: '0 6 * * 1'        # 06:00 UTC every Monday
+  workflow_dispatch:            # allow manual runs
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: gemini-maintenance
+  cancel-in-progress: false
+
+jobs:
+  maintain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: chmod +x ./gradlew
+
+      # Lint + compile both modules; keep going on failure — the log is the input.
+      - name: Capture lint + compile logs
+        continue-on-error: true
+        run: |
+          set +e
+          ./gradlew :mobile:lintDebug :wear:lintDebug compileDebugKotlin --no-daemon \
+            > build-log.txt 2>&1
+          echo "Gradle exit: $?"
+          # Keep the prompt small: last 60 KB of the log only.
+          tail -c 61440 build-log.txt > build-log.trunc.txt || true
+
+      - name: Ask Gemini to propose fixes
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: gemini-2.5-flash      # free-tier Flash model
+        run: python .github/scripts/gemini_fix.py
+
+      # Hard gate: the proposed changes must still pass our unit tests, or we abort
+      # (no PR). This is what makes an autonomous bot safe.
+      - name: Verify the patched tree still builds & tests pass
+        run: ./gradlew :mobile:testDebugUnitTest :wear:testDebugUnitTest --no-daemon --stacktrace
+
+      # Created with BOT_PAT (not GITHUB_TOKEN) so the PR TRIGGERS the CI and
+      # auto-merge workflows — GITHUB_TOKEN-authored PRs do not trigger workflows.
+      - name: Open pull request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.BOT_PAT }}
+          branch: gemini/maintenance
+          delete-branch: true
+          commit-message: "chore: automated maintenance (Gemini)"
+          title: "🤖 Gemini automated maintenance"
+          labels: automerge
+          add-paths: |
+            **/*.kt
+            **/*.kts
+            gradle/libs.versions.toml
+          body: |
+            Automated maintenance proposed by **Gemini** (`${{ env.GEMINI_MODEL }}`) from the weekly run.
+
+            - Source: Gradle lint + `compileDebugKotlin` logs.
+            - These changes already passed `:mobile:testDebugUnitTest` + `:wear:testDebugUnitTest`
+              in this job; the PR must also pass the **CI** check before auto-merge.
+            - If nothing needed fixing, no PR is opened.
+
+            Review the diff before trusting it — Gemini can be wrong.
+        env:
+          GEMINI_MODEL: gemini-2.5-flash
