@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.sp
 import androidx.health.connect.client.PermissionController
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.core.content.IntentCompat
 import androidx.lifecycle.lifecycleScope
 import com.wearosgpx.mobile.health.HealthConnectWriter
 import com.wearosgpx.mobile.route.GeocodingService
@@ -108,6 +109,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         handleStravaRedirect(intent)
+        handleIncomingGpx(intent)
         setContent {
             val available by hcAvailable
             val granted by hcGranted
@@ -175,6 +177,46 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleStravaRedirect(intent)
+        handleIncomingGpx(intent)
+    }
+
+    /** Import a GPX opened with / shared to the app (VIEW a .gpx, or SEND from another app). */
+    private fun handleIncomingGpx(intent: Intent?) {
+        val uri: Uri = when (intent?.action) {
+            Intent.ACTION_VIEW -> intent.data
+            Intent.ACTION_SEND -> IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+            else -> null
+        } ?: return
+        // Don't double-handle the OAuth redirect.
+        if (uri.scheme == "wearosgpx") return
+
+        lifecycleScope.launch {
+            val name = runCatching {
+                val bytes = withContext(Dispatchers.IO) {
+                    contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                } ?: error("unreadable")
+                val head = bytes.take(2048).toByteArray().decodeToString()
+                require(head.contains("<gpx", ignoreCase = true)) { "not a GPX file" }
+                val fileName = PhoneRouteStore.safeName(gpxName(uri, bytes))
+                PhoneRouteStore.save(this@MainActivity, fileName, bytes)
+                runCatching { WatchRoutes.sendRoute(applicationContext, fileName, bytes) }
+                fileName
+            }.getOrNull()
+            Toast.makeText(
+                this@MainActivity,
+                name?.let { "Imported “$it”" } ?: "That file isn't a valid GPX route",
+                Toast.LENGTH_LONG,
+            ).show()
+            if (name != null) { delay(500); refreshRoutes() }
+        }
+    }
+
+    /** A route name from the URI's display name, else the GPX <name>, else a fallback. */
+    private fun gpxName(uri: Uri, bytes: ByteArray): String {
+        displayName(uri)?.takeIf { it.isNotBlank() }?.let { return it }
+        val tag = Regex("<name>(.*?)</name>", RegexOption.DOT_MATCHES_ALL)
+            .find(bytes.decodeToString())?.groupValues?.get(1)?.trim()
+        return tag?.takeIf { it.isNotBlank() } ?: uri.lastPathSegment ?: "Imported route"
     }
 
     override fun onResume() {
