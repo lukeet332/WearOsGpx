@@ -364,9 +364,6 @@ private fun CompanionApp(
                 ) { Text("Re-sync watch runs") }
             }
 
-            Spacer(Modifier.height(12.dp))
-            StravaCard(stravaConnected, stravaAthlete, onConnectStrava, onDisconnectStrava)
-
             Spacer(Modifier.height(16.dp))
             Button(
                 onClick = onCreate,
@@ -415,12 +412,26 @@ private fun CompanionApp(
             )
         }
 
-        if (showSettings) SettingsDialog(onDismiss = { showSettings = false })
+        if (showSettings) {
+            SettingsDialog(
+                stravaConnected = stravaConnected,
+                stravaAthlete = stravaAthlete,
+                onConnectStrava = onConnectStrava,
+                onDisconnectStrava = onDisconnectStrava,
+                onDismiss = { showSettings = false },
+            )
+        }
     }
 }
 
 @Composable
-private fun SettingsDialog(onDismiss: () -> Unit) {
+private fun SettingsDialog(
+    stravaConnected: Boolean,
+    stravaAthlete: String?,
+    onConnectStrava: () -> Unit,
+    onDisconnectStrava: () -> Unit,
+    onDismiss: () -> Unit,
+) {
     val context = LocalContext.current
     var key by remember { mutableStateOf(AppSettings.storedOrsKey(context)) }
     AlertDialog(
@@ -428,7 +439,7 @@ private fun SettingsDialog(onDismiss: () -> Unit) {
         containerColor = Color(0xFF1A1A1A),
         title = { Text("Settings", color = Color.White) },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text("OpenRouteService API key", color = Color.White, fontSize = 15.sp)
                 Text(
                     "Used for road-following route creation. Leave blank to use the built-in default. " +
@@ -444,6 +455,17 @@ private fun SettingsDialog(onDismiss: () -> Unit) {
                     label = { Text("API key") },
                     modifier = Modifier.fillMaxWidth(),
                 )
+
+                Spacer(Modifier.height(20.dp))
+                Text("Strava (optional)", color = Color.White, fontSize = 15.sp)
+                Text(
+                    "Auto-upload finished runs to Strava as well. Your primary sync is Health " +
+                        "Connect (read by Samsung Health) — Strava is an extra.",
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 13.sp,
+                )
+                Spacer(Modifier.height(8.dp))
+                StravaCard(stravaConnected, stravaAthlete, onConnectStrava, onDisconnectStrava)
             }
         },
         confirmButton = {
@@ -451,7 +473,7 @@ private fun SettingsDialog(onDismiss: () -> Unit) {
                 Text("Save", color = Neon)
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = Neon) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close", color = Neon) } },
     )
 }
 
