@@ -33,6 +33,62 @@ object PhoneRouteStore {
     fun delete(context: Context, fileName: String): Boolean =
         File(dir(context), safeName(fileName)).let { it.exists() && it.delete() }
 
+    // --- Recycle bin: deletes/updates move the old GPX to a timestamped trash dir so
+    //     mistakes (incl. AI ones) are recoverable; entries auto-purge after TRASH_MAX_AGE_MS. ---
+
+    const val TRASH_MAX_AGE_MS: Long = 2L * 24 * 60 * 60 * 1000   // 2 days
+    private const val TRASH_SEP = "__"
+
+    private fun trashDir(context: Context): File {
+        val d = context.getExternalFilesDir("routes_trash") ?: File(context.filesDir, "routes_trash")
+        if (!d.exists()) d.mkdirs()
+        return d
+    }
+
+    // pure helpers (unit-tested)
+    fun trashEntryName(fileName: String, epochMillis: Long): String = "$epochMillis$TRASH_SEP${safeName(fileName)}"
+    fun originalNameOf(trashEntry: String): String = trashEntry.substringAfter(TRASH_SEP, trashEntry)
+    fun timestampOf(trashEntry: String): Long? = trashEntry.substringBefore(TRASH_SEP).toLongOrNull()
+    fun isExpired(trashEntry: String, nowMillis: Long, maxAgeMillis: Long): Boolean {
+        val ts = timestampOf(trashEntry) ?: return true   // unparseable -> purge
+        return nowMillis - ts > maxAgeMillis
+    }
+
+    /** A trashed route: its trash file name, the original route name, and when it was deleted. */
+    data class TrashedRoute(val entry: String, val originalName: String, val deletedAt: Long)
+
+    /** Move a route's GPX to the recycle bin (versioned by timestamp). Best-effort. */
+    fun moveToTrash(context: Context, fileName: String, now: Long = System.currentTimeMillis()) {
+        val src = File(dir(context), safeName(fileName))
+        if (!src.exists()) return
+        val dest = File(trashDir(context), trashEntryName(fileName, now))
+        runCatching { src.copyTo(dest, overwrite = true); src.delete() }
+    }
+
+    fun listTrash(context: Context): List<TrashedRoute> =
+        trashDir(context).listFiles()
+            ?.filter { it.isFile && it.name.contains(TRASH_SEP) }
+            ?.map { TrashedRoute(it.name, originalNameOf(it.name), timestampOf(it.name) ?: 0L) }
+            ?.sortedByDescending { it.deletedAt }
+            ?: emptyList()
+
+    /** Restore a trashed entry back to the routes dir; returns the restored file name, or null. */
+    fun restoreFromTrash(context: Context, entry: String): String? {
+        val src = File(trashDir(context), entry)
+        if (!src.exists()) return null
+        val dest = File(dir(context), safeName(originalNameOf(entry)))
+        return runCatching { src.copyTo(dest, overwrite = true); src.delete(); dest.name }.getOrNull()
+    }
+
+    /** Delete trash entries older than [maxAgeMillis]. Returns how many were purged. */
+    fun purgeTrash(context: Context, maxAgeMillis: Long = TRASH_MAX_AGE_MS, now: Long = System.currentTimeMillis()): Int {
+        var purged = 0
+        trashDir(context).listFiles()?.forEach { f ->
+            if (isExpired(f.name, now, maxAgeMillis) && f.delete()) purged++
+        }
+        return purged
+    }
+
     /** Returns the local GPX file for a route name, if the phone has a copy. */
     fun fileFor(context: Context, fileName: String): File? =
         File(dir(context), safeName(fileName)).takeIf { it.exists() }

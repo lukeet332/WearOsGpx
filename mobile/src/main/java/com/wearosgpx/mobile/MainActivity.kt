@@ -116,6 +116,7 @@ class MainActivity : ComponentActivity() {
     private val hcAvailable = mutableStateOf(true)
     private val hcGranted = mutableStateOf(false)
     private val routes = mutableStateOf<List<RouteRow>>(emptyList())
+    private val trashed = mutableStateOf<List<PhoneRouteStore.TrashedRoute>>(emptyList())
     private var permissionFlowThisLaunch = false   // true on the first-run permission launch
 
     private val requestPermissions = registerForActivityResult(
@@ -141,10 +142,13 @@ class MainActivity : ComponentActivity() {
             val available by hcAvailable
             val granted by hcGranted
             val routeList by routes
+            val trashedList by trashed
             CompanionApp(
                 hcAvailable = available,
                 hcGranted = granted,
                 routes = routeList,
+                recentlyDeleted = trashedList,
+                onRestore = ::restoreRoute,
                 onGrant = ::onGrantClicked,
                 onOpenSettings = { startActivity(Intent(this, SettingsActivity::class.java)) },
                 onImport = { pickGpx.launch(arrayOf("application/gpx+xml", "application/xml", "text/xml", "application/octet-stream")) },
@@ -249,6 +253,29 @@ class MainActivity : ComponentActivity() {
         refreshRoutes()
         syncQueuedRuns(auto = true)
         promptForKeysOnce()
+        lifecycleScope.launch(Dispatchers.IO) { PhoneRouteStore.purgeTrash(applicationContext) }  // clear old recycle-bin entries
+        refreshTrash()
+    }
+
+    private fun refreshTrash() {
+        lifecycleScope.launch {
+            trashed.value = withContext(Dispatchers.IO) { PhoneRouteStore.listTrash(applicationContext) }
+        }
+    }
+
+    /** Restore a route from the recycle bin: bring back the GPX, re-push to the watch, rebuild basemap. */
+    private fun restoreRoute(item: PhoneRouteStore.TrashedRoute) {
+        lifecycleScope.launch {
+            val name = withContext(Dispatchers.IO) { PhoneRouteStore.restoreFromTrash(applicationContext, item.entry) }
+            if (name != null) {
+                PhoneRouteStore.fileFor(applicationContext, name)?.readBytes()?.let { bytes ->
+                    runCatching { WatchRoutes.sendRoute(applicationContext, name, bytes) }
+                }
+                attachBaseMap(name)
+                Toast.makeText(this@MainActivity, "Restored “${item.originalName}”", Toast.LENGTH_SHORT).show()
+            }
+            delay(400); refreshRoutes(); refreshTrash()
+        }
     }
 
     /**
@@ -465,13 +492,13 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             if (row.onWatch) runCatching { WatchRoutes.delete(applicationContext, fileName) }
             if (row.onPhone) {
-                PhoneRouteStore.delete(applicationContext, fileName)
+                PhoneRouteStore.moveToTrash(applicationContext, fileName)   // recoverable for 2 days
                 PhoneRouteStore.deleteBaseMap(applicationContext, fileName)
             }
             getSharedPreferences("basemap", MODE_PRIVATE).edit().apply {
                 putStringSet("done", (getSharedPreferences("basemap", MODE_PRIVATE).getStringSet("done", emptySet())!! - fileName))
             }.apply()
-            delay(600); refreshRoutes()
+            delay(600); refreshRoutes(); refreshTrash()
         }
     }
 
@@ -504,6 +531,8 @@ private fun CompanionApp(
     hcAvailable: Boolean,
     hcGranted: Boolean,
     routes: List<RouteRow>,
+    recentlyDeleted: List<PhoneRouteStore.TrashedRoute>,
+    onRestore: (PhoneRouteStore.TrashedRoute) -> Unit,
     onGrant: () -> Unit,
     onOpenSettings: () -> Unit,
     onImport: () -> Unit,
@@ -528,6 +557,7 @@ private fun CompanionApp(
     ) {
         var detail by remember { mutableStateOf<RouteRow?>(null) }
         var showDiscover by remember { mutableStateOf(false) }
+        var showTrash by remember { mutableStateOf(false) }
 
         Column(
             modifier = Modifier
@@ -593,7 +623,14 @@ private fun CompanionApp(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("Routes", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                TextButton(onClick = onRefresh) { Text("Refresh", color = Neon) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (recentlyDeleted.isNotEmpty()) {
+                        TextButton(onClick = { showTrash = true }) {
+                            Text("Recently deleted (${recentlyDeleted.size})", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
+                        }
+                    }
+                    TextButton(onClick = onRefresh) { Text("Refresh", color = Neon) }
+                }
             }
             Spacer(Modifier.height(8.dp))
 
@@ -618,6 +655,14 @@ private fun CompanionApp(
                 onSendToWatch = { onSendToWatch(row); detail = null },
                 onDelete = { onDelete(row); detail = null },
                 onDismiss = { detail = null },
+            )
+        }
+
+        if (showTrash) {
+            RecycleBinDialog(
+                items = recentlyDeleted,
+                onRestore = { onRestore(it) },
+                onDismiss = { showTrash = false },
             )
         }
 
@@ -799,6 +844,44 @@ private fun statusText(route: RouteRow): String = when {
 
 private fun statusColor(route: RouteRow): Color =
     if (route.onWatch) Neon else Color(0xFFF9A825)
+
+@Composable
+private fun RecycleBinDialog(
+    items: List<PhoneRouteStore.TrashedRoute>,
+    onRestore: (PhoneRouteStore.TrashedRoute) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF1A1A1A),
+        title = { Text("Recently deleted", color = Color.White) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    "Deleted routes are kept here for 2 days, then cleared. Restore one if it was a mistake (e.g. the AI got it wrong).",
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 13.sp,
+                )
+                Spacer(Modifier.height(8.dp))
+                if (items.isEmpty()) {
+                    Text("Nothing here.", color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp)
+                } else {
+                    items.forEach { t ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(t.originalName.removeSuffix(".gpx"), color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                            TextButton(onClick = { onRestore(t) }) { Text("Restore", color = Neon) }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close", color = Neon) } },
+    )
+}
 
 @Composable
 private fun RouteDetailDialog(
