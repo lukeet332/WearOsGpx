@@ -37,7 +37,14 @@ object BaseMapService {
     private const val T_WATER = 3
 
     /** Build + gzip the basemap for [routePoints] (lat,lon). Null if empty/failed. */
-    suspend fun build(routePoints: List<Pair<Double, Double>>): ByteArray? = withContext(Dispatchers.IO) {
+    /** Gzipped JSON of the basemap, for storing locally + pushing to the watch. */
+    suspend fun build(routePoints: List<Pair<Double, Double>>): ByteArray? {
+        val map = buildBaseMap(routePoints) ?: return null
+        return gzip(json.encodeToString(map).toByteArray(Charsets.UTF_8))
+    }
+
+    /** The basemap object itself (for in-app previews, before any save). */
+    suspend fun buildBaseMap(routePoints: List<Pair<Double, Double>>): BaseMap? = withContext(Dispatchers.IO) {
         if (routePoints.size < 2) return@withContext null
         val lats = routePoints.map { it.first }
         val lons = routePoints.map { it.second }
@@ -76,8 +83,7 @@ object BaseMapService {
                 features += MapFeature(type, simplified.flatMap { listOf(round5(it.first), round5(it.second)) })
             }
             if (features.isEmpty()) return@withContext null
-            val capped = capToBudget(features)
-            gzip(json.encodeToString(BaseMap(capped)).toByteArray(Charsets.UTF_8))
+            BaseMap(capToBudget(features))
         }.getOrNull()
     }
 

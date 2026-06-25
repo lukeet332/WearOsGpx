@@ -143,6 +143,7 @@ private fun AiRouteScreen(
         var input by remember { mutableStateOf("") }
         var busy by remember { mutableStateOf(false) }
         var pending by remember { mutableStateOf<AiRouteAgent.Turn.RouteReady?>(null) }
+        var previewBaseMap by remember { mutableStateOf<BaseMap?>(null) }
         val listState = rememberLazyListState()
 
         fun submit() {
@@ -217,9 +218,16 @@ private fun AiRouteScreen(
             }
         }
 
+        // Build the surrounding basemap for the preview once a route is ready (best-effort).
+        LaunchedEffect(pending) {
+            previewBaseMap = null
+            pending?.let { previewBaseMap = BaseMapService.buildBaseMap(it.geometry.points) }
+        }
+
         pending?.let { ready ->
             RoutePreviewDialog(
                 ready = ready,
+                baseMap = previewBaseMap,
                 onConfirm = {
                     busy = true
                     scope.launch {
@@ -259,6 +267,7 @@ private fun Bubble(msg: ChatMsg) {
 @Composable
 private fun RoutePreviewDialog(
     ready: AiRouteAgent.Turn.RouteReady,
+    baseMap: BaseMap?,
     onConfirm: () -> Unit,
     onDiscard: () -> Unit,
 ) {
@@ -268,8 +277,9 @@ private fun RoutePreviewDialog(
         title = { Text(ready.name, color = Color.White) },
         text = {
             Column {
-                RouteLinePreview(
+                RoutePreviewMap(
                     points = ready.geometry.points,
+                    baseMap = baseMap,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(170.dp)
@@ -291,36 +301,4 @@ private fun RoutePreviewDialog(
         },
         dismissButton = { TextButton(onClick = onDiscard) { Text("Discard", color = Color(0xFFFF6B6B)) } },
     )
-}
-
-/** Compact neon-on-black preview of the route line, fitted to the box. */
-@Composable
-private fun RouteLinePreview(points: List<Pair<Double, Double>>, modifier: Modifier = Modifier) {
-    Canvas(modifier.background(Color.Black)) {
-        if (points.size < 2) return@Canvas
-        val centerLatRad = Math.toRadians(points.map { it.first }.average())
-        val lonScale = cos(centerLatRad).toFloat()
-        val xs = points.map { (it.second * lonScale).toFloat() }
-        val ys = points.map { it.first.toFloat() }
-        val minX = xs.min(); val maxX = xs.max(); val minY = ys.min(); val maxY = ys.max()
-        val spanX = (maxX - minX).coerceAtLeast(1e-9f)
-        val spanY = (maxY - minY).coerceAtLeast(1e-9f)
-        val pad = 14.dp.toPx()
-        val availW = (size.width - 2 * pad).coerceAtLeast(1f)
-        val availH = (size.height - 2 * pad).coerceAtLeast(1f)
-        val scale = min(availW / spanX, availH / spanY)
-        val offX = pad + (availW - spanX * scale) / 2f
-        val offY = pad + (availH - spanY * scale) / 2f
-        val pts = points.map { (lat, lon) ->
-            Offset(offX + ((lon * lonScale).toFloat() - minX) * scale, offY + (maxY - lat.toFloat()) * scale)
-        }
-        val path = Path().apply {
-            moveTo(pts[0].x, pts[0].y)
-            for (i in 1..pts.lastIndex) lineTo(pts[i].x, pts[i].y)
-        }
-        drawPath(path, Neon.copy(alpha = 0.15f), style = Stroke(10.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-        drawPath(path, Neon, style = Stroke(2.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-        drawCircle(Neon, radius = 4.dp.toPx(), center = pts.first())
-        drawCircle(Color.White, radius = 4.dp.toPx(), center = pts.last())
-    }
 }
