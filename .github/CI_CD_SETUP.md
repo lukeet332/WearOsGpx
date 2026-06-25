@@ -7,25 +7,26 @@ The pipeline:
 |---|---|
 | `dependabot.yml` | Weekly dependency PRs (Gradle catalog + Actions) |
 | `workflows/ci.yml` | JVM unit tests on every PR → the required status check |
-| `workflows/gemini-maintenance.yml` + `scripts/ai_fix.py` | 2×/week AI fix bot → PR (model from `ai_model.json`) |
+| `workflows/ai-maintenance.yml` + `scripts/ai_fix.py` | 2×/week AI fix bot → PR (model from `ai_model.json`) |
 | `workflows/auto-merge.yml` | Auto-merges bot PRs once CI is green |
 | `workflows/release.yml` | On a meaningful change to `main`: AI version → GitHub Release **and** Play internal-testing upload (same version), gated by the `PLAY_DEPLOY_ENABLED` variable |
 
-## 0. Note on the Gemini model
-There is no "Gemini 3.5 Flash". The current **free-tier** Flash model on Google AI
-Studio is **`gemini-2.5-flash`** — that's what the workflow uses (override via the
-`GEMINI_MODEL` env in `gemini-maintenance.yml`, e.g. `gemini-1.5-flash`).
+## 0. Note on the models
+The fix bot's active model lives in `.github/ai_model.json` (default: GitHub Models
+`openai/gpt-4.1`, Gemini fallback) and is re-evaluated weekly by `ai-model-review.yml`.
+The **version classifier** (`release.yml` → `scripts/gemini_version.py`) still uses Google
+AI Studio's free **`gemini-2.5-flash`** (override via the `GEMINI_MODEL` env in `release.yml`).
 
 ## 1. Secrets (Settings → Secrets and variables → Actions → New repository secret)
 | Secret | Needed by | How to get it |
 |---|---|---|
-| `GEMINI_API_KEY` | Gemini bot | aistudio.google.com → "Get API key" (free) |
-| `BOT_PAT` | Gemini bot's PR | A **fine-grained PAT** (see below) |
+| `GEMINI_API_KEY` | Version classifier + fix-bot fallback | aistudio.google.com → "Get API key" (free) |
+| `BOT_PAT` | AI bot's PRs | A **fine-grained PAT** (see below) |
 | `PLAY_SERVICE_ACCOUNT_JSON`, `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` | release.yml (Play upload) | (already set). Play upload also needs the **`PLAY_DEPLOY_ENABLED=true`** repo *variable* |
 
 **Why `BOT_PAT`?** A PR opened with the default `GITHUB_TOKEN` does **not** trigger
-other workflows (GitHub anti-recursion). The Gemini PR must trigger `ci.yml` and
-`auto-merge.yml`, so it's opened with a PAT instead.
+other workflows (GitHub anti-recursion). The AI bot's PRs must trigger `ci.yml` and
+`auto-merge.yml`, so they're opened with a PAT instead.
 Create it: GitHub → Settings (your account) → Developer settings → **Fine-grained
 tokens** → only this repo → Repository permissions: **Contents: Read and write**,
 **Pull requests: Read and write**. Paste it as the `BOT_PAT` secret.
@@ -33,7 +34,7 @@ tokens** → only this repo → Repository permissions: **Contents: Read and wri
 ## 2. Repository settings to toggle (Settings → Actions → General)
 - **Workflow permissions → "Read and write permissions"**.
 - ✅ **"Allow GitHub Actions to create and approve pull requests"** (Dependabot +
-  Gemini PRs, and enabling auto-merge).
+  AI bot PRs, and enabling auto-merge).
 
 ## 3. Allow auto-merge (Settings → General → Pull Requests)
 - ✅ **"Allow auto-merge"**. Without this, `gh pr merge --auto` has nothing to arm.
@@ -60,15 +61,15 @@ tokens** → only this repo → Repository permissions: **Contents: Read and wri
   any. Turn on Settings → Actions → General → **"Require approval for all outside
   collaborators"** (or "first-time contributors") so fork workflows need your
   click.
-- **Gemini secret can't leak.** `gemini-maintenance.yml` runs **only** on `schedule`
-  / `workflow_dispatch` from your repo — never on fork PRs — so `GEMINI_API_KEY` is
-  never available in a fork context. The key is sent in an HTTP header, never a URL,
-  and is never printed.
+- **Model API keys can't leak.** `ai-maintenance.yml` runs **only** on `schedule`
+  / `workflow_dispatch` from your repo — never on fork PRs — so `GEMINI_API_KEY` and the
+  other provider keys are never available in a fork context. Keys are sent in HTTP
+  headers, never a URL, and never printed.
 - **Dependabot runs get a write-scoped `GITHUB_TOKEN` but NO other secrets** (GitHub
   policy). `auto-merge.yml` relies only on `GITHUB_TOKEN`, so it works for Dependabot
   without exposing `GEMINI_API_KEY`/`BOT_PAT`.
 - **Bots never merge unverified code:** required `unit-tests` check gates every
-  merge, and the Gemini job additionally re-runs the tests before even opening a PR.
+  merge, and the maintenance job additionally re-runs the tests before even opening a PR.
 
 ## 5b. PR-only `main` + AI-versioned releases
 
@@ -93,5 +94,5 @@ tokens** → only this repo → Repository permissions: **Contents: Read and wri
 1. Add the secrets + toggles above.
 2. Push these files to `main` → `ci.yml` runs once → select `unit-tests` in branch
    protection.
-3. `Actions → Gemini maintenance → Run workflow` to test the bot on demand.
+3. `Actions → AI maintenance → Run workflow` to test the bot on demand.
 4. Dependabot: `Insights → Dependency graph → Dependabot` → "Check for updates".

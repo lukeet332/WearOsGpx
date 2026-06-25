@@ -16,7 +16,7 @@ permissions:
   models: read                  # GitHub Models inference via GITHUB_TOKEN
 
 concurrency:
-  group: gemini-maintenance
+  group: ai-maintenance
   cancel-in-progress: false
 
 jobs:
@@ -75,7 +75,7 @@ jobs:
         uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.BOT_PAT }}
-          branch: gemini/maintenance
+          branch: ai-fix(${{ steps.fix.outputs.bot_label || 'model' }})/maintenance
           delete-branch: true
           commit-message: "chore: automated maintenance (${{ steps.fix.outputs.bot_label || 'ai-bot' }})"
           title: "🤖 ${{ steps.fix.outputs.bot_label || 'ai-bot' }}: automated maintenance"
