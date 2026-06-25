@@ -1,11 +1,13 @@
 name: Release
 
-# On every merge to main, an AI picks the next SemVer bump from the commits, builds
-# both signed APKs, tags the commit, and publishes a GitHub Release with the phone +
-# Wear APKs attached. (Play deployment stays in deploy.yml.)
+# Runs only AFTER CI passes on main, so a release can never be cut from a broken /
+# non-compiling main. An AI picks the next SemVer bump from the commits, builds both
+# signed APKs, tags the commit, and publishes a GitHub Release with the phone + Wear
+# APKs attached. (Play deployment stays in deploy.yml.)
 on:
-  push:
-    branches: [ main ]
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -17,11 +19,19 @@ concurrency:
 
 jobs:
   release:
+    # Manual dispatch, or a SUCCESSFUL CI run that was a push to main.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
+          # The exact commit CI just greenlit (falls back to the branch on dispatch).
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
           fetch-depth: 0     # need full history + tags for versioning
 
       - name: Work out commits since the last release
