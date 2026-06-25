@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -94,7 +95,7 @@ class RouteCreatorActivity : ComponentActivity() {
     private fun nameStep(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
+            gravity = Gravity.CENTER_VERTICAL          // block centered vertically, text left-aligned
             setBackgroundColor(Color.BLACK)
             setPadding(dp(28), dp(28), dp(28), dp(28))
             fitsSystemWindows = true
@@ -114,6 +115,9 @@ class RouteCreatorActivity : ComponentActivity() {
             hint = "Route name"
             setText("My Route")
             setSelectAllOnFocus(true)
+            isSingleLine = true                                 // Enter submits, doesn't add a line
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS
+            imeOptions = EditorInfo.IME_ACTION_DONE
             setTextColor(Color.WHITE)
             setHintTextColor(Color.GRAY)
             textSize = 17f
@@ -126,15 +130,21 @@ class RouteCreatorActivity : ComponentActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
             )
         }
+
+        fun proceed() {
+            routeName = field.text?.toString()?.trim().orEmpty().ifEmpty { "My Route" }
+            showMapStep()
+        }
+        field.setOnEditorActionListener { _, id, _ ->
+            if (id == EditorInfo.IME_ACTION_DONE) { proceed(); true } else false
+        }
+
         root.addView(field)
         root.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, dp(20), 0, 0)
             addView(pill("Cancel", filled = false) { finish() })
-            addView(pill("Continue", filled = true) {
-                routeName = field.text?.toString()?.trim().orEmpty().ifEmpty { "My Route" }
-                showMapStep()
-            })
+            addView(pill("Continue", filled = true) { proceed() })
         })
         return root
     }
