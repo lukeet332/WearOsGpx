@@ -172,6 +172,20 @@ class AiRouteAgent(
             }
         }
 
+        "routes_near" -> {
+            val lat = AiRouteLogic.argDouble(a, "lat")
+            val lon = AiRouteLogic.argDouble(a, "lon")
+            val target = AiRouteLogic.argDouble(a, "distance_m").let { if (it.isNaN()) 5000.0 else it }
+            if (lat.isNaN() || lon.isNaN()) """{"error":"need lat and lon"}"""
+            else {
+                val loops = RouteDiscoveryService.findLoopsNear(lat, lon, target)
+                loops.forEach { discovered[it.route.id] = it.route }
+                """{"loops":[""" + loops.take(5).joinToString(",") {
+                    """{"id":${it.route.id},"name":${JsonPrimitive(it.route.name)},"distance_m":${it.distanceMeters.toInt()}}"""
+                } + "]}"
+            }
+        }
+
         "load_route" -> {
             val id = AiRouteLogic.argDouble(a, "id").let { if (it.isNaN()) null else it.toLong() }
             val route = id?.let { discovered[it] }
@@ -305,7 +319,9 @@ Tools:
                     -> road path through the waypoints
   search_routes     args: {"query":"<name>"} OR {}              -> real OSM routes [{"id","name","activity"}]
                     (query = search by name e.g. "South West Coast Path"; {} = named routes near you)
-  load_route        args: {"id":<id from search_routes>}        -> builds that route's geometry
+  load_route        args: {"id":<id from search_routes/routes_near>} -> builds that route's geometry
+  routes_near       args: {"lat":..,"lon":..,"distance_m":<int>}   -> OSM loops near a point of ~distance_m
+                    that pass over it [{"id","name","distance_m"}] (for "find the course at this spot")
   find_parkrun      args: {"query":"<name>"} OR {}              -> matching parkruns [{"name","location","lat","lon","distance_m"}]
                     (query = by name e.g. "Bushy"; {} = parkruns near you. LOCATION only, not the course.)
   import_gpx_url    args: {"url":"<direct .gpx link>"}          -> imports a route from a GPX the user links
@@ -326,11 +342,13 @@ How to work:
 - PARKRUN: call find_parkrun (it returns LOCATION only, not the course). If several match,
   ask which. Then, with the start lat/lon:
     1. try search_routes with the parkrun's name and load_route the best match (the real course);
-    2. else build a loop with round_trip from the start at the returned distance_m (5k adult /
-       2k junior) — tell the user it's an approximation of the parkrun, not the official lap;
-    3. else (you also can't build a loop) APOLOGISE: say you couldn't find the course on
+    2. else call routes_near with the start lat/lon and the returned distance_m; if it returns a
+       loop, load_route the FIRST (closest) one and action=final with a reply that you couldn't
+       find an exact parkrun course on OpenStreetMap but found a ~Nk loop over the start that's
+       LIKELY it — ask them to check the preview and confirm it looks right;
+    3. else (routes_near is empty too) APOLOGISE: say you couldn't find the course on
        OpenStreetMap, and explain parkrun has deliberately locked down its data/APIs to prevent
-       exactly this. Do NOT suggest importing a GPX.
+       exactly this. Do NOT suggest importing a GPX, and do NOT invent a loop.
 - ONE-OFF or ANNUAL RACES (e.g. a specific year's marathon): these change yearly and are NOT
   reliably in any database — do NOT invent the course. Try search_routes; if nothing fits, be
   honest you can't reproduce an exact dated course from memory.
