@@ -26,6 +26,11 @@ updates:
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
       - dependency-name: "androidx.health.connect:*"
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "androidx.room:*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      # AGP / Gradle major bumps are deliberate migrations, never auto-proposed.
+      - dependency-name: "com.android.application"
+        update-types: ["version-update:semver-major"]
       - dependency-name: "androidx.compose:compose-bom"
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
     groups:
