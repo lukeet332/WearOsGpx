@@ -25,6 +25,18 @@ object AppSettings {
     const val DEFAULT_AI_MODEL = "gpt-4o-mini"
     const val DEFAULT_AI_BASE = "https://api.openai.com/v1"
 
+    /** Provider resolved from an API key's prefix, so the user only pastes the key. */
+    data class AiProvider(val name: String, val baseUrl: String, val model: String)
+
+    fun detectProvider(key: String): AiProvider = when {
+        // OpenRouter keys ("sk-or-…") also start with "sk-", so check them first.
+        key.startsWith("sk-or-") -> AiProvider("OpenRouter", "https://openrouter.ai/api/v1", "openai/gpt-4o-mini")
+        key.startsWith("gsk_") -> AiProvider("Groq", "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile")
+        key.startsWith("AIza") -> AiProvider("Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash")
+        key.startsWith("sk-") -> AiProvider("OpenAI", DEFAULT_AI_BASE, DEFAULT_AI_MODEL)
+        else -> AiProvider("OpenAI-compatible", DEFAULT_AI_BASE, DEFAULT_AI_MODEL)
+    }
+
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -47,15 +59,17 @@ object AppSettings {
         prefs(context).edit().putString(KEY_AI, key.trim()).apply()
     }
 
+    /** Model: explicit override if the user set one, else the default for the detected provider. */
     fun aiModel(context: Context): String =
-        prefs(context).getString(KEY_AI_MODEL, "").orEmpty().ifBlank { DEFAULT_AI_MODEL }
+        prefs(context).getString(KEY_AI_MODEL, "").orEmpty().ifBlank { detectProvider(aiKey(context)).model }
 
     fun setAiModel(context: Context, model: String) {
         prefs(context).edit().putString(KEY_AI_MODEL, model.trim()).apply()
     }
 
+    /** Base URL: explicit override if set, else derived from the detected provider. */
     fun aiBaseUrl(context: Context): String =
-        prefs(context).getString(KEY_AI_BASE, "").orEmpty().ifBlank { DEFAULT_AI_BASE }
+        prefs(context).getString(KEY_AI_BASE, "").orEmpty().ifBlank { detectProvider(aiKey(context)).baseUrl }
 
     fun setAiBaseUrl(context: Context, url: String) {
         prefs(context).edit().putString(KEY_AI_BASE, url.trim()).apply()

@@ -78,16 +78,12 @@ private fun SettingsScreen(prompt: Boolean, onBack: () -> Unit) {
     ) {
         var ors by remember { mutableStateOf(AppSettings.storedOrsKey(context)) }
         var aiKey by remember { mutableStateOf(AppSettings.aiKey(context)) }
-        var aiModel by remember { mutableStateOf(AppSettings.aiModel(context)) }
-        var aiBase by remember { mutableStateOf(AppSettings.aiBaseUrl(context)) }
         var stravaConnected by remember { mutableStateOf(StravaClient.isConnected(context)) }
         val athlete = remember { StravaClient.connectedAthlete(context) }
 
         fun saveAll() {
             AppSettings.setOrsKey(context, ors)
             AppSettings.setAiKey(context, aiKey)
-            AppSettings.setAiModel(context, aiModel)
-            AppSettings.setAiBaseUrl(context, aiBase)
             Toast.makeText(context, "Settings saved", Toast.LENGTH_SHORT).show()
         }
 
@@ -129,32 +125,22 @@ private fun SettingsScreen(prompt: Boolean, onBack: () -> Unit) {
             KeyCard(
                 title = "AI provider",
                 status = if (aiKey.isBlank()) "Not set — needed for AI route generation"
-                else "✓ Key set",
+                else "✓ Key set · ${AppSettings.detectProvider(aiKey).name}",
                 statusOk = aiKey.isNotBlank(),
-                blurb = "Powers describing a route in plain text (\"5k loop from here\"). Any " +
-                    "OpenAI-compatible provider works — set the key, model and base URL below.",
+                blurb = "Powers describing a route in plain text (\"5k loop from here\"). " +
+                    "Recommended: Google Gemini Flash — free, fast, and with limits you're unlikely to " +
+                    "hit. Grab a free key from Google AI Studio and paste it below; we auto-detect the " +
+                    "provider. Any OpenAI-compatible key also works (OpenRouter, Groq, OpenAI).",
                 links = listOf(
-                    "OpenAI keys →" to "https://platform.openai.com/api-keys",
-                    "OpenRouter (many free) →" to "https://openrouter.ai/keys",
-                    "Google Gemini →" to "https://aistudio.google.com/app/apikey",
+                    "Get a free Gemini key →" to "https://aistudio.google.com/app/apikey",
+                    "OpenRouter →" to "https://openrouter.ai/keys",
+                    "OpenAI →" to "https://platform.openai.com/api-keys",
                 ),
                 onOpen = ::open,
             ) {
                 OutlinedTextField(
                     value = aiKey, onValueChange = { aiKey = it }, singleLine = true,
-                    label = { Text("AI API key") }, modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = aiModel, onValueChange = { aiModel = it }, singleLine = true,
-                    label = { Text("Model (e.g. ${AppSettings.DEFAULT_AI_MODEL})") },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = aiBase, onValueChange = { aiBase = it }, singleLine = true,
-                    label = { Text("OpenAI-compatible base URL") },
-                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Paste your AI API key") }, modifier = Modifier.fillMaxWidth(),
                 )
             }
 
