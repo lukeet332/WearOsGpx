@@ -12,6 +12,7 @@ import java.net.URL
 import java.net.URLEncoder
 import kotlin.math.cos
 import kotlin.math.hypot
+import kotlin.math.pow
 import org.xmlpull.v1.XmlPullParser
 
 /**
@@ -27,6 +28,8 @@ object RouteDiscoveryService {
     private const val UA = "WearOsGpx/1.0 (route discovery)"
     private const val OVERPASS = "https://overpass-api.de/api/interpreter"
     private const val MAX_POINTS = 3000          // decimate huge trails for the watch
+    private const val MAX_START_DISTANCE_M = 500.0   // a candidate loop must pass this close to the start
+    private const val TARGET_TOLERANCE = 0.35        // and be within ±35% of the target distance
     private val json = Json { ignoreUnknownKeys = true }
 
     data class DiscoveredRoute(val id: Long, val name: String, val activity: String)
@@ -116,6 +119,62 @@ object RouteDiscoveryService {
         runCatching {
             decimate(parseGpxTrack(httpGet(url))).takeIf { it.size >= 2 }
         }.getOrNull()
+    }
+
+    data class NearbyLoop(val route: DiscoveredRoute, val distanceMeters: Double)
+
+    /**
+     * Find named OSM route relations near (lat, lon) that look like a loop of ~[targetMeters]
+     * passing over the point — e.g. a candidate for a parkrun whose exact course isn't named
+     * in OSM. Fetches each nearby relation's geometry (capped) and keeps those that [qualifyLoop]
+     * accepts, closest-to-target first. Network-bound; empty on failure.
+     */
+    suspend fun findLoopsNear(
+        lat: Double,
+        lon: Double,
+        targetMeters: Double,
+        radiusKm: Double = 3.0,
+        maxCandidates: Int = 8,
+    ): List<NearbyLoop> = withContext(Dispatchers.IO) {
+        val onFoot = searchNearby(lat, lon, radiusKm).filter {
+            val a = it.activity.lowercase()
+            a.contains("foot") || a.contains("run") || a.contains("hik") || a.contains("walk")
+        }.take(maxCandidates)
+        onFoot.mapNotNull { r ->
+            val pts = buildPoints(r) ?: return@mapNotNull null
+            qualifyLoop(pts, lat, lon, targetMeters)?.let { NearbyLoop(r, it) }
+        }.sortedBy { kotlin.math.abs(it.distanceMeters - targetMeters) }
+    }
+
+    /**
+     * Pure: if [points] form a route within [TARGET_TOLERANCE] of [targetMeters] AND pass within
+     * [MAX_START_DISTANCE_M] of (lat, lon), return the route's length in metres; else null. Keeps
+     * the "is this plausibly the parkrun" thresholds testable without the network.
+     */
+    internal fun qualifyLoop(
+        points: List<Pair<Double, Double>>,
+        lat: Double,
+        lon: Double,
+        targetMeters: Double,
+    ): Double? {
+        if (points.size < 2) return null
+        val nearestToStart = points.minOf { haversine(lat, lon, it.first, it.second) }
+        if (nearestToStart > MAX_START_DISTANCE_M) return null
+        var dist = 0.0
+        for (i in 1 until points.size) {
+            dist += haversine(points[i - 1].first, points[i - 1].second, points[i].first, points[i].second)
+        }
+        if (kotlin.math.abs(dist - targetMeters) > targetMeters * TARGET_TOLERANCE) return null
+        return dist
+    }
+
+    private fun haversine(la1: Double, lo1: Double, la2: Double, lo2: Double): Double {
+        val r = 6_371_000.0
+        val dLat = Math.toRadians(la2 - la1)
+        val dLon = Math.toRadians(lo2 - lo1)
+        val h = kotlin.math.sin(dLat / 2).pow(2) +
+            cos(Math.toRadians(la1)) * cos(Math.toRadians(la2)) * kotlin.math.sin(dLon / 2).pow(2)
+        return 2 * r * kotlin.math.asin(kotlin.math.min(1.0, kotlin.math.sqrt(h)))
     }
 
     /** Parse trk/rte points out of a GPX document (wpt markers only if there's no track). */
