@@ -5,8 +5,15 @@ name: Deploy to Play (internal testing)
 #   PLAY_SERVICE_ACCOUNT_JSON  - Google Play service account JSON (the "API key")
 #   KEYSTORE_BASE64            - base64 of the upload keystore (.jks)
 #   KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD
-# One-time manual setup is still required (see README/notes): create the app in
-# Play Console, enrol in Play App Signing, and upload the first release by hand.
+# One-time manual setup is required BEFORE this can succeed (the Play Edits API
+# can't create the first release): create the app in Play Console, enrol in Play
+# App Signing, and upload the first AAB for both the phone and Wear OS tracks by
+# hand. Until that's done the API upload fails with "Unknown error occurred".
+#
+# OPT-IN GATE: this job is DORMANT until you set the repo variable
+#   PLAY_DEPLOY_ENABLED = true   (Settings → Secrets and variables → Actions → Variables)
+# so it shows as "skipped" (not a red failure) while Play setup is still pending.
+# Flip it to true once the manual setup above is complete.
 
 # Runs only AFTER CI passes on main, so a build can never be deployed from a broken /
 # non-compiling main.
@@ -18,12 +25,14 @@ on:
 
 jobs:
   deploy:
-    # Manual dispatch, or a SUCCESSFUL CI run that was a push to main.
+    # Dormant until PLAY_DEPLOY_ENABLED=true, AND then: manual dispatch, or a
+    # SUCCESSFUL CI run that was a push to main.
     if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_branch == 'main')
+      vars.PLAY_DEPLOY_ENABLED == 'true' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
