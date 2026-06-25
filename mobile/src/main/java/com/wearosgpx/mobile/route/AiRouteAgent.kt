@@ -159,6 +159,19 @@ class AiRouteAgent(
             } + "]}"
         }
 
+        "find_parkrun" -> {
+            val q = AiRouteLogic.argString(a, "query")
+            val events = ParkrunService.events()
+            if (events.isEmpty()) """{"error":"couldn't reach the parkrun event list"}"""
+            else {
+                val matches = if (!q.isNullOrBlank()) ParkrunParse.search(events, q)
+                else currentLocation?.let { ParkrunParse.nearest(events, it.first, it.second, 6) } ?: emptyList()
+                """{"parkruns":[""" + matches.take(6).joinToString(",") {
+                    """{"name":${JsonPrimitive(it.longName)},"location":${JsonPrimitive(it.location)},"lat":${it.lat},"lon":${it.lon},"distance_m":${it.distanceMeters}}"""
+                } + "]}"
+            }
+        }
+
         "load_route" -> {
             val id = AiRouteLogic.argDouble(a, "id").let { if (it.isNaN()) null else it.toLong() }
             val route = id?.let { discovered[it] }
@@ -293,6 +306,8 @@ Tools:
   search_routes     args: {"query":"<name>"} OR {}              -> real OSM routes [{"id","name","activity"}]
                     (query = search by name e.g. "South West Coast Path"; {} = named routes near you)
   load_route        args: {"id":<id from search_routes>}        -> builds that route's geometry
+  find_parkrun      args: {"query":"<name>"} OR {}              -> matching parkruns [{"name","location","lat","lon","distance_m"}]
+                    (query = by name e.g. "Bushy"; {} = parkruns near you. LOCATION only, not the course.)
   import_gpx_url    args: {"url":"<direct .gpx link>"}          -> imports a route from a GPX the user links
   list_routes       args: {}                                    -> {"routes":[{"file","name","distance_m"}]}
   delete_route      args: {"file":"<file from list_routes>"}    -> moves it to the recycle bin (recoverable)
@@ -308,10 +323,19 @@ How to work:
 - For "Nk loop" use round_trip; for "to X" / "via X and Y" geocode them and use route.
 - KNOWN/NAMED routes (trails, well-known long-distance paths): try search_routes by name and
   load_route the best match BEFORE building one yourself.
-- ONE-OFF or ANNUAL RACES (e.g. a specific year's marathon / Great South Run): these change yearly
-  and are NOT reliably in any database — do NOT invent the course. search_routes; if nothing fits,
-  ask the user for the official GPX link (race website / Strava export / plotaroute) and use
-  import_gpx_url. Be honest that you can't reproduce an exact dated course from memory.
+- PARKRUN: call find_parkrun (it returns LOCATION only, not the course). If several match,
+  ask which. Then, with the start lat/lon:
+    1. try search_routes with the parkrun's name and load_route the best match (the real course);
+    2. else build a loop with round_trip from the start at the returned distance_m (5k adult /
+       2k junior) — tell the user it's an approximation of the parkrun, not the official lap;
+    3. else (you also can't build a loop) APOLOGISE: say you couldn't find the course on
+       OpenStreetMap, and explain parkrun has deliberately locked down its data/APIs to prevent
+       exactly this. Do NOT suggest importing a GPX.
+- ONE-OFF or ANNUAL RACES (e.g. a specific year's marathon): these change yearly and are NOT
+  reliably in any database — do NOT invent the course. Try search_routes; if nothing fits, be
+  honest you can't reproduce an exact dated course from memory.
+- NEVER proactively suggest the user import a GPX file — they already know they can; it's annoying.
+  Only use import_gpx_url if the user themselves provides a GPX link.
 - MATCH THE TARGET: round_trip returns the ACTUAL distance_m. If it's still off the user's
   requested distance by more than ~8%, call round_trip AGAIN (adjust distance_m, or a new seed)
   before finalising. Only action=final when the actual distance is close to what they asked.
