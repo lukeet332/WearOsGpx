@@ -81,7 +81,7 @@ jobs:
 
       - name: Set up JDK 17
         if: startsWith(env.BRANCH, 'gemini/') && steps.guard.outputs.stop == 'false'
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: '17', cache: gradle }
 
       - name: Set up Python
