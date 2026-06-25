@@ -1,0 +1,57 @@
+name: App model self-review
+
+# Weekly: re-scan the best FREE models per provider for the phone app's AI route generator
+# and refresh res/raw/recommended_models.json (dropdown options + recommended default).
+# The current model proposes candidates; each is validated with a live call against the
+# real provider (using our keys) before it's kept. Ships in the next release.
+on:
+  schedule:
+    - cron: '30 7 * * 1'      # 07:30 UTC Mondays (after ai-model-review at 07:00)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  models: read                  # GitHub Models inference via GITHUB_TOKEN
+
+concurrency:
+  group: app-model-review
+  cancel-in-progress: false
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with: { python-version: '3.12' }
+
+      - name: Re-scan + validate recommended models
+        id: review
+        env:
+          GH_MODELS_TOKEN: ${{ secrets.GITHUB_TOKEN }}       # GitHub Models (proposes candidates)
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}      # validate Gemini models
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: python .github/scripts/app_model_review.py
+
+      - name: Open PR with the refreshed model list
+        if: steps.review.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.BOT_PAT }}
+          branch: ci/app-models
+          delete-branch: true
+          add-paths: mobile/src/main/res/raw/recommended_models.json
+          commit-message: "chore: refresh AI route model list (${{ steps.review.outputs.providers }})"
+          title: "🤖 Refresh AI route model list (${{ steps.review.outputs.providers }})"
+          labels: automerge
+          body: |
+            Weekly re-scan of the best **free** models per provider for AI route generation.
+            Each model was **validated with a live call** against its provider before being
+            kept; providers without a key kept their current entries. Ships in the next
+            release; the in-app dropdown and the "Auto" default pick this up.
+
+            Review the diff before trusting it.
