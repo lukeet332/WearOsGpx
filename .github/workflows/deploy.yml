@@ -24,15 +24,48 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy:
-    # Dormant until PLAY_DEPLOY_ENABLED=true, AND then: manual dispatch, or a
-    # SUCCESSFUL CI run that was a push to main.
+  # Gate: dormant until PLAY_DEPLOY_ENABLED=true, AND only when meaningful APP code
+  # changed since the last release (not pipeline-only / docs commits). Manual dispatch /
+  # first release always proceed.
+  guard:
     if: >
       vars.PLAY_DEPLOY_ENABLED == 'true' &&
       (github.event_name == 'workflow_dispatch' ||
        (github.event.workflow_run.conclusion == 'success' &&
         github.event.workflow_run.event == 'push' &&
         github.event.workflow_run.head_branch == 'main'))
+    runs-on: ubuntu-latest
+    outputs:
+      app_changed: ${{ steps.diff.outputs.app_changed }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+          fetch-depth: 0
+      - name: Did app code change since the last release?
+        id: diff
+        env:
+          DISPATCH: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          if [ "$DISPATCH" = "true" ] || [ -z "$LAST_TAG" ]; then
+            echo "Manual dispatch or first release -> proceeding."
+            echo "app_changed=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          CHANGED=$(git diff --name-only "$LAST_TAG"..HEAD)
+          echo "Files changed since $LAST_TAG:"; echo "$CHANGED"
+          MEANINGFUL=$(printf '%s\n' "$CHANGED" | grep -vE '^\.github/|(^|/)[^/]*\.md$|^\.gitignore$|^LICENSE|^docs/' || true)
+          if [ -n "$MEANINGFUL" ]; then
+            echo "Meaningful app changes found -> deploying."
+            echo "app_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Only pipeline/docs changed -> skipping deploy."
+            echo "app_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy:
+    needs: guard
+    if: needs.guard.outputs.app_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
