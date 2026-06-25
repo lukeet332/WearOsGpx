@@ -1,0 +1,86 @@
+name: Gemini fix broken main
+
+# Safety net: if CI ever goes RED on main (a merge slipped something through, an
+# external/toolchain change broke the build, etc.), Gemini reads the failure log and
+# opens a fix PR. That PR goes through the normal gate (CI → auto-merge), and if
+# Gemini's first attempt is imperfect, pr-self-heal.yml iterates on it. Runs from
+# main via workflow_run, so it has full secret access.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+  models: read                  # GitHub Models inference via GITHUB_TOKEN
+
+concurrency:
+  group: gemini-main-fix
+  cancel-in-progress: false
+
+jobs:
+  fix-main:
+    if: >
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.BOT_PAT }}
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17', cache: gradle }
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+
+      - run: chmod +x ./gradlew
+
+      - name: Fetch the failing CI log
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh run view "${{ github.event.workflow_run.id }}" --repo "${{ github.repository }}" --log-failed \
+            > build-log.txt 2>&1 || true
+          tail -c 61440 build-log.txt > build-log.trunc.txt || true
+
+      - name: Ask the model to fix main
+        env:
+          GH_MODELS_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # GitHub Models auth (models:read)
+          GH_MODEL: openai/gpt-4.1                        # primary "heavy thinking" model
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}   # automatic fallback
+          GEMINI_MODEL: gemini-2.5-flash
+        run: python .github/scripts/ai_fix.py
+
+      # Opens a PR only if Gemini actually changed something. The PR is gated by CI
+      # like any other; pr-self-heal.yml will iterate if the first try isn't enough.
+      - name: Open a fix PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.BOT_PAT }}
+          branch: gemini/main-fix
+          delete-branch: true
+          commit-message: "fix: repair broken main (CI failure) [gemini-pr-fix]"
+          title: "🤖 Fix broken main (CI failure)"
+          labels: automerge
+          add-paths: |
+            **/*.kt
+            **/*.kts
+            gradle/libs.versions.toml
+            .github/AI_CONTEXT.md
+          body: |
+            CI failed on **main**. GitHub Models (`openai/gpt-4.1`, Gemini fallback)
+            analysed the failure log and proposes this fix. It must pass CI before
+            auto-merge; if the first attempt is imperfect, `pr-self-heal.yml` will
+            iterate (max 3).
+
+            Review before trusting — the model can be wrong.
