@@ -8,16 +8,27 @@ name: Deploy to Play (internal testing)
 # One-time manual setup is still required (see README/notes): create the app in
 # Play Console, enrol in Play App Signing, and upload the first release by hand.
 
+# Runs only AFTER CI passes on main, so a build can never be deployed from a broken /
+# non-compiling main.
 on:
-  push:
-    branches: [ main ]
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
   workflow_dispatch:
 
 jobs:
   deploy:
+    # Manual dispatch, or a SUCCESSFUL CI run that was a push to main.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       - uses: actions/setup-java@v4
         with:

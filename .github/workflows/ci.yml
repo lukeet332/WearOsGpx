@@ -35,8 +35,16 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Run JVM unit tests (mobile + wear)
-        run: ./gradlew :mobile:testDebugUnitTest :wear:testDebugUnitTest --no-daemon --stacktrace
+      # Assemble BOTH debug APKs, then run the unit tests, in one Gradle invocation.
+      # assembleDebug is what catches resource/manifest/packaging breakage that the
+      # unit tests miss (they compile Kotlin but don't run AAPT2 / manifest merge /
+      # APK packaging). So a PR that doesn't actually build can't pass this gate.
+      - name: Build debug APKs + run unit tests (mobile + wear)
+        run: >
+          ./gradlew
+          :mobile:assembleDebug :wear:assembleDebug
+          :mobile:testDebugUnitTest :wear:testDebugUnitTest
+          --no-daemon --stacktrace
 
       - name: Upload test reports
         if: always()
