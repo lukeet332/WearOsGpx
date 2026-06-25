@@ -33,10 +33,15 @@ jobs:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: echo "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/upload-keystore.jks"
 
+      - name: Compute version code
+        id: vc
+        # GHA expressions have NO arithmetic operators, so compute it in shell.
+        run: echo "code=$(( 1000 + GITHUB_RUN_NUMBER ))" >> "$GITHUB_OUTPUT"
+
       - name: Build release bundles
         env:
           # +1000 so CI codes always clear the first manual upload (mobile=1, wear=100001).
-          VERSION_CODE: ${{ 1000 + github.run_number }}
+          VERSION_CODE: ${{ steps.vc.outputs.code }}
           KEYSTORE_FILE: ${{ github.workspace }}/upload-keystore.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}

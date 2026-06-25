@@ -30,15 +30,14 @@ jobs:
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
           if [ -n "$LAST_TAG" ]; then
             echo "last_version=${LAST_TAG#v}" >> "$GITHUB_OUTPUT"
-            RANGE="${LAST_TAG}..HEAD"
+            COMMITS=$(git log "${LAST_TAG}..HEAD" --pretty=format:'%s' | head -50)
           else
             echo "last_version=0.0.0" >> "$GITHUB_OUTPUT"
-            RANGE=""
+            COMMITS=$(git log --pretty=format:'%s' | head -50)
           fi
           {
             echo "commits<<COMMITS_EOF"
-            git log $RANGE --pretty=format:'%s' | head -50
-            echo ""
+            echo "$COMMITS"
             echo "COMMITS_EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -69,10 +68,14 @@ jobs:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: echo "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/upload-keystore.jks"
 
+      - name: Compute version code
+        id: vc
+        run: echo "code=$(( 1000 + GITHUB_RUN_NUMBER ))" >> "$GITHUB_OUTPUT"
+
       - name: Build signed release APKs
         env:
           VERSION_NAME: ${{ steps.ver.outputs.new_version }}
-          VERSION_CODE: ${{ 1000 + github.run_number }}
+          VERSION_CODE: ${{ steps.vc.outputs.code }}
           KEYSTORE_FILE: ${{ github.workspace }}/upload-keystore.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
