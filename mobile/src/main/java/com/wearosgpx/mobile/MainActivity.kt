@@ -73,7 +73,6 @@ import androidx.core.content.FileProvider
 import androidx.core.content.IntentCompat
 import androidx.lifecycle.lifecycleScope
 import com.wearosgpx.mobile.health.HealthConnectWriter
-import com.wearosgpx.mobile.route.BaseMap
 import com.wearosgpx.mobile.route.BaseMapService
 import com.wearosgpx.mobile.route.GeocodingService
 import com.wearosgpx.mobile.route.GpxMeta
@@ -81,7 +80,7 @@ import com.wearosgpx.mobile.route.AiRouteActivity
 import com.wearosgpx.mobile.route.PhoneRouteStore
 import com.wearosgpx.mobile.route.RouteCreatorActivity
 import com.wearosgpx.mobile.route.RouteDiscoveryService
-import com.wearosgpx.mobile.route.RoutePreviewMap
+import com.wearosgpx.mobile.route.RoutePreviewMapView
 import com.wearosgpx.mobile.settings.AppSettings
 import com.wearosgpx.mobile.settings.SettingsActivity
 import com.wearosgpx.mobile.strava.StravaClient
@@ -822,16 +821,10 @@ private fun RouteDetailDialog(
                     }
                 } else emptyList()
             }
-            val baseMap by produceState<BaseMap?>(null, row.fileName, row.onPhone) {
-                value = if (row.onPhone && row.fileName != null) {
-                    withContext(Dispatchers.IO) { PhoneRouteStore.loadBaseMap(context, row.fileName) }
-                } else null
-            }
             Column {
                 if (points.size >= 2) {
-                    RoutePreviewMap(
+                    RoutePreviewMapView(
                         points = points,
-                        baseMap = baseMap,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(160.dp)

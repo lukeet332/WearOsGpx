@@ -143,7 +143,6 @@ private fun AiRouteScreen(
         var input by remember { mutableStateOf("") }
         var busy by remember { mutableStateOf(false) }
         var pending by remember { mutableStateOf<AiRouteAgent.Turn.RouteReady?>(null) }
-        var previewBaseMap by remember { mutableStateOf<BaseMap?>(null) }
         val listState = rememberLazyListState()
 
         fun submit() {
@@ -218,16 +217,9 @@ private fun AiRouteScreen(
             }
         }
 
-        // Build the surrounding basemap for the preview once a route is ready (best-effort).
-        LaunchedEffect(pending) {
-            previewBaseMap = null
-            pending?.let { previewBaseMap = BaseMapService.buildBaseMap(it.geometry.points) }
-        }
-
         pending?.let { ready ->
             RoutePreviewDialog(
                 ready = ready,
-                baseMap = previewBaseMap,
                 onConfirm = {
                     busy = true
                     scope.launch {
@@ -267,7 +259,6 @@ private fun Bubble(msg: ChatMsg) {
 @Composable
 private fun RoutePreviewDialog(
     ready: AiRouteAgent.Turn.RouteReady,
-    baseMap: BaseMap?,
     onConfirm: () -> Unit,
     onDiscard: () -> Unit,
 ) {
@@ -277,9 +268,8 @@ private fun RoutePreviewDialog(
         title = { Text(ready.name, color = Color.White) },
         text = {
             Column {
-                RoutePreviewMap(
+                RoutePreviewMapView(
                     points = ready.geometry.points,
-                    baseMap = baseMap,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(170.dp)
