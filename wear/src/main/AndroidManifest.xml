@@ -52,6 +52,10 @@
                     android:scheme="wear"
                     android:host="*"
                     android:pathPrefix="/route" />
+                <data
+                    android:scheme="wear"
+                    android:host="*"
+                    android:pathPrefix="/basemap" />
             </intent-filter>
             <intent-filter>
                 <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />

@@ -8,35 +8,55 @@ import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
+import com.wearosgpx.data.gpx.BaseMapStore
 import com.wearosgpx.data.gpx.RouteCatalog
 import com.wearosgpx.data.gpx.RouteUpdates
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
 import java.io.File
 
-/** Receives a GPX file pushed from the phone and saves it into the routes dir. */
+/** Receives GPX routes (and their baked basemaps) pushed from the phone. */
 class RouteImportListenerService : WearableListenerService() {
 
     override fun onDataChanged(events: DataEventBuffer) {
-        val routeItems = events.filter {
-            it.type == DataEvent.TYPE_CHANGED &&
-                it.dataItem.uri.path?.startsWith(PATH) == true
+        for (event in events) {
+            if (event.type != DataEvent.TYPE_CHANGED) continue
+            val path = event.dataItem.uri.path ?: continue
+            when {
+                path.startsWith(PATH_BASEMAP) -> handleBaseMap(event)
+                path.startsWith(PATH) -> handleRoute(event)
+            }
         }
-        for (event in routeItems) {
-            val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
-            val asset = dataMap.getAsset(KEY_GPX) ?: continue
-            val name = dataMap.getString(KEY_NAME) ?: "route-${dataMap.getLong(KEY_TIMESTAMP)}.gpx"
-            runCatching {
-                runBlocking {
-                    val bytes = readAsset(asset)
-                    val file = File(RouteCatalog.routesDir(this@RouteImportListenerService), safeName(name))
-                    file.writeBytes(bytes)
-                    Log.i(TAG, "Imported route '${file.name}' (${bytes.size} bytes).")
-                    RouteUpdates.bump()
-                    RouteIndexPublisher.publish(this@RouteImportListenerService)
-                }
-            }.onFailure { Log.e(TAG, "Route import failed", it) }
-        }
+    }
+
+    private fun handleRoute(event: DataEvent) {
+        val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
+        val asset = dataMap.getAsset(KEY_GPX) ?: return
+        val name = dataMap.getString(KEY_NAME) ?: "route-${dataMap.getLong(KEY_TIMESTAMP)}.gpx"
+        runCatching {
+            runBlocking {
+                val bytes = readAsset(asset)
+                val file = File(RouteCatalog.routesDir(this@RouteImportListenerService), safeName(name))
+                file.writeBytes(bytes)
+                Log.i(TAG, "Imported route '${file.name}' (${bytes.size} bytes).")
+                RouteUpdates.bump()
+                RouteIndexPublisher.publish(this@RouteImportListenerService)
+            }
+        }.onFailure { Log.e(TAG, "Route import failed", it) }
+    }
+
+    private fun handleBaseMap(event: DataEvent) {
+        val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
+        val asset = dataMap.getAsset(KEY_MAP) ?: return
+        val route = dataMap.getString(KEY_ROUTE) ?: return
+        runCatching {
+            runBlocking {
+                val bytes = readAsset(asset)
+                BaseMapStore.save(this@RouteImportListenerService, safeName(route), bytes)
+                Log.i(TAG, "Saved basemap for '$route' (${bytes.size} bytes).")
+                RouteUpdates.bump()
+            }
+        }.onFailure { Log.e(TAG, "Basemap save failed", it) }
     }
 
     /** Phone → watch delete request: payload is the file name to remove. */
@@ -46,6 +66,7 @@ class RouteImportListenerService : WearableListenerService() {
         runCatching {
             runBlocking {
                 val removed = RouteCatalog.deleteRoute(this@RouteImportListenerService, fileName)
+                BaseMapStore.delete(this@RouteImportListenerService, safeName(fileName))
                 Log.i(TAG, "Delete '$fileName' → $removed")
                 RouteUpdates.bump()
                 RouteIndexPublisher.publish(this@RouteImportListenerService)
@@ -66,9 +87,12 @@ class RouteImportListenerService : WearableListenerService() {
     companion object {
         private const val TAG = "RouteImport"
         const val PATH = "/route"
+        const val PATH_BASEMAP = "/basemap"
         const val PATH_DELETE = "/route/delete"
         const val KEY_GPX = "gpx"
         const val KEY_NAME = "name"
         const val KEY_TIMESTAMP = "ts"
+        const val KEY_MAP = "map"
+        const val KEY_ROUTE = "route"
     }
 }

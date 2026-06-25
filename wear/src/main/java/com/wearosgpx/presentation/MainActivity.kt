@@ -98,6 +98,8 @@ import androidx.wear.compose.material.Scaffold
 import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.TimeText
 import com.wearosgpx.R
+import com.wearosgpx.data.gpx.BaseMap
+import com.wearosgpx.data.gpx.BaseMapStore
 import com.wearosgpx.data.gpx.GeoPoint
 import com.wearosgpx.data.gpx.GeoUtils
 import com.wearosgpx.data.gpx.GpxRoute
@@ -570,6 +572,15 @@ fun WearApp(
     }
 }
 
+/** Loads the route's baked basemap (off the main thread); null until ready / if none. */
+@Composable
+private fun rememberBaseMap(route: GpxRoute?): BaseMap? {
+    val context = LocalContext.current
+    return produceState<BaseMap?>(initialValue = null, route?.fileName) {
+        value = withContext(Dispatchers.IO) { BaseMapStore.load(context, route?.fileName) }
+    }.value
+}
+
 /** Low-power always-on render. Run screen shows a dim map + stats refreshed ~1/min. */
 @Composable
 private fun AmbientScreen(
@@ -701,7 +712,7 @@ private fun SettingsScreen(onBack: () -> Unit) {
 private val EDGE_BUTTON_HEIGHT = 60.dp
 
 /**
- * Course preview (Garmin-style): GPS status up top, route + stats, and an
+ * Course preview (sports-watch style): GPS status up top, route + stats, and an
  * edge-hugging Start button that greys out until GPS locks — but stays clickable.
  * Entering the screen warms up GPS; leaving without starting cancels the warm-up.
  */
@@ -736,6 +747,7 @@ private fun PreviewScreen(
                 route = route.points,
                 mode = MapMode.OVERVIEW,
                 routeColor = Color(0xFF39FF14),  // bright course line; no neon track in preview
+                baseMap = rememberBaseMap(route),
                 modifier = Modifier.weight(1f).fillMaxWidth(),
             )
             Text(
@@ -754,7 +766,7 @@ private fun PreviewScreen(
             }
         }
 
-        // Greyed until GPS locks, but always clickable (Garmin lets you start early).
+        // Greyed until GPS locks, but always clickable (start is allowed before GPS lock).
         EdgeButton(
             text = "Start",
             onClick = onStart,
@@ -775,7 +787,7 @@ private fun GpsStatus(label: String, color: Color) {
 }
 
 /**
- * Proximity to the course start (Garmin-style). Tells you whether to walk to the
+ * Proximity to the course start (sports-watch style). Tells you whether to walk to the
  * start: "At start" within 30 m, otherwise an arrow + distance pointing to it.
  */
 @Composable
@@ -923,6 +935,7 @@ private fun ActiveMap(route: GpxRoute?, state: ExerciseServiceState) {
             headingDegrees = heading,
             mode = MapMode.FOLLOW,
             viewRadiusMeters = viewRadius.value,
+            baseMap = rememberBaseMap(route),
         )
 
         // Scrim so the overlay stays legible over the map.

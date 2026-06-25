@@ -44,6 +44,16 @@ object WatchRoutes {
         Wearable.getDataClient(context).putDataItem(request).await()
     }
 
+    /** Pushes the baked vector basemap for a route (saved on the watch as <route>.map). */
+    suspend fun sendBaseMap(context: Context, gpxFileName: String, bytes: ByteArray) {
+        val request = PutDataMapRequest.create("/basemap/${System.currentTimeMillis()}").apply {
+            dataMap.putAsset("map", Asset.createFromBytes(bytes))
+            dataMap.putString("route", gpxFileName)
+            dataMap.putLong("ts", System.currentTimeMillis())
+        }.asPutDataRequest().setUrgent()
+        Wearable.getDataClient(context).putDataItem(request).await()
+    }
+
     /** Asks the watch to delete an imported route by file name. */
     suspend fun delete(context: Context, fileName: String) {
         val nodes = Wearable.getNodeClient(context).connectedNodes.await()

@@ -1,6 +1,6 @@
 # WearOsGpx
 
-Standalone, Garmin-like GPX navigation + run-tracking app for **Wear OS 4+**, optimized for the
+Standalone, sports-watch-style GPX navigation + run-tracking app for **Wear OS 4+**, optimized for the
 **OnePlus Watch 2R** dual-chip architecture. Records a run fully standalone (no phone), then syncs to
 a phone companion that writes it into Health Connect (for Strava / OHealth).
 
@@ -125,9 +125,9 @@ NOTE: "back to start" is currently straight-line bearing/distance, not full reve
   swipe right to Pause/Stop controls) → Finished summary → back to list. Transitions slide
   (forward = in from right, back = in from left).
 - **Map modes are automatic, never a tap-toggle:** run ACTIVE → follow (track-up, zoomed, heading
-  chevron); idle/paused/preview → overview (whole route fitted, north-up). Mirrors how Garmin works.
+  chevron); idle/paused/preview → overview (whole route fitted, north-up). Mirrors how dedicated running watches work.
 - **Visual style:** dark background, **neon-green** route/track line with a layered glow; big-number stats
-  with small units (Garmin-like).
+  with small units (sports-watch-style).
 - **Round-screen safe area:** do NOT use a rectangular inscribed box (Horologist `fillMaxRectangle`) — it
   was tried and looked cramped. Center content in the circle's widest band with proportional padding;
   use `ScalingLazyColumn` for lists; edge buttons use the custom `BottomEdgeShape` (flat top, bottom arc

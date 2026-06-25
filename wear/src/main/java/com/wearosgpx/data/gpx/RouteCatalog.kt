@@ -32,6 +32,7 @@ object RouteCatalog {
             ?.sortedBy { it.name }
             ?.mapNotNull { file ->
                 runCatching { file.inputStream().use { GpxParser.parse(it) } }.getOrNull()
+                    ?.copy(fileName = file.name)
             }
             ?: emptyList()
 }

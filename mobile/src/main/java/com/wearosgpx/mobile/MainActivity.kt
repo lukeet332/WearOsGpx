@@ -56,6 +56,7 @@ import androidx.core.content.FileProvider
 import androidx.core.content.IntentCompat
 import androidx.lifecycle.lifecycleScope
 import com.wearosgpx.mobile.health.HealthConnectWriter
+import com.wearosgpx.mobile.route.BaseMapService
 import com.wearosgpx.mobile.route.GeocodingService
 import com.wearosgpx.mobile.route.GpxMeta
 import com.wearosgpx.mobile.route.PhoneRouteStore
@@ -156,6 +157,7 @@ class MainActivity : ComponentActivity() {
                 if (ok) "Added “${route.name}”" else "Couldn't fetch that route",
                 Toast.LENGTH_LONG,
             ).show()
+            if (ok) attachBaseMap(route.name)
             delay(500); refreshRoutes()
         }
     }
@@ -347,6 +349,7 @@ class MainActivity : ComponentActivity() {
                 runCatching { WatchRoutes.sendRoute(applicationContext, name, bytes) }
             }.isSuccess
             Toast.makeText(this@MainActivity, if (ok) "Imported “$name”" else "Import failed", Toast.LENGTH_LONG).show()
+            if (ok) attachBaseMap(name)
             delay(600); refreshRoutes()
         }
     }
@@ -356,7 +359,26 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             val ok = runCatching { WatchRoutes.sendRoute(applicationContext, row.fileName!!, bytes) }.isSuccess
             Toast.makeText(this@MainActivity, if (ok) "Sent to watch" else "Watch not reachable", Toast.LENGTH_SHORT).show()
+            if (ok) attachBaseMap(row.fileName)
             delay(800); refreshRoutes()
+        }
+    }
+
+    /**
+     * Build the surrounding vector basemap for a route (OSM via Overpass, on the
+     * phone) and push it to the watch. Best-effort + fully async — never blocks the
+     * GPX push, and silently no-ops if offline or the area has no data.
+     */
+    private fun attachBaseMap(rawName: String) {
+        val fileName = PhoneRouteStore.safeName(rawName)
+        lifecycleScope.launch {
+            runCatching {
+                val file = PhoneRouteStore.fileFor(applicationContext, fileName) ?: return@runCatching
+                val points = withContext(Dispatchers.IO) { GpxMeta.readPoints(file) }
+                if (points.size < 2) return@runCatching
+                val mapBytes = withContext(Dispatchers.IO) { BaseMapService.build(points) } ?: return@runCatching
+                WatchRoutes.sendBaseMap(applicationContext, fileName, mapBytes)
+            }
         }
     }
 

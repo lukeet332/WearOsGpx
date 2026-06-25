@@ -132,7 +132,7 @@ class ExerciseService : LifecycleService() {
 
     // --- Public control surface (called from the UI through the binder) ---
 
-    /** Warms up GPS/HR before the run (Garmin-style acquisition on the preview screen). */
+    /** Warms up GPS/HR before the run (sports-watch-style acquisition on the preview screen). */
     fun prepareRun() {
         lifecycleScope.launch { runCatching { exerciseManager.prepareExercise() } }
     }
@@ -214,7 +214,7 @@ class ExerciseService : LifecycleService() {
         }
     }
 
-    /** Garmin-style "GPS ready" chime when a fix is first acquired. */
+    /** sports-watch-style "GPS ready" chime when a fix is first acquired. */
     private fun onLocationAvailability(availability: LocationAvailability) {
         val prev = _stateFlow.value.locationAvailability
         val nowAcquired = availability == LocationAvailability.ACQUIRED_TETHERED ||

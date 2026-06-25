@@ -7,7 +7,7 @@ import java.time.Instant
  * Builds an *activity* GPX from a finished run for upload to Strava.
  *
  * Unlike a route GPX, this has per-point `<time>` (required, or Strava treats the
- * file as a route, not an activity) and embeds heart rate via the Garmin
+ * file as a route, not an activity) and embeds heart rate via the standard
  * TrackPointExtension that Strava understands. Points are sorted + de-duplicated by
  * timestamp so the track is monotonic in time.
  */

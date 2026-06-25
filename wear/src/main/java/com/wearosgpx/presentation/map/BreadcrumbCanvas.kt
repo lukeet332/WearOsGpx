@@ -16,7 +16,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.Text
+import com.wearosgpx.data.gpx.BaseMap
 import com.wearosgpx.data.gpx.GeoPoint
+import com.wearosgpx.data.gpx.MapFeature
 import kotlin.math.min
 
 /** Overview = whole route fitted, north-up. Follow = zoomed, centered on you, track-up. */
@@ -43,6 +45,7 @@ fun BreadcrumbCanvas(
     routeColor: Color = Color(0xFF3A3A3A),
     neon: Color = Color(0xFF39FF14),
     ambient: Boolean = false,
+    baseMap: BaseMap? = null,
 ) {
     if (route.isEmpty() && track.isEmpty()) {
         Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No route loaded") }
@@ -53,14 +56,48 @@ fun BreadcrumbCanvas(
     val glow = !ambient
     val drawRoute = if (ambient) Color(0xFF2A2A2A) else routeColor
     val drawNeon = if (ambient) Color(0xFF6E9E6E) else neon
+    // Quiet grey/blue basemap recedes so the neon route stays the hero. Skipped in
+    // ambient to keep the low-power render minimal.
+    val bm = if (ambient) null else baseMap
 
     Canvas(modifier.fillMaxSize()) {
         val pad = 16.dp.toPx()
         if (mode == MapMode.FOLLOW && current != null) {
-            drawFollow(route, track, current, headingDegrees ?: 0f, viewRadiusMeters, pad, drawRoute, drawNeon, glow)
+            drawFollow(route, track, current, headingDegrees ?: 0f, viewRadiusMeters, pad, drawRoute, drawNeon, glow, bm)
         } else {
-            drawOverview(route, track, current, pad, drawRoute, drawNeon, glow)
+            drawOverview(route, track, current, pad, drawRoute, drawNeon, glow, bm)
         }
+    }
+}
+
+private fun baseColor(t: Int): Color = when (t) {
+    0 -> Color(0xFF666666)   // major road
+    1 -> Color(0xFF474747)   // minor road
+    2 -> Color(0xFF3A3A3A)   // path
+    3 -> Color(0xFF2C4A63)   // water (muted blue)
+    else -> Color(0xFF3A3A3A)
+}
+
+private fun baseWidthDp(t: Int): Float = when (t) {
+    0 -> 1.6f; 1 -> 1.1f; 2 -> 0.9f; 3 -> 1.3f; else -> 1.0f
+}
+
+private fun MapFeature.toGeoPoints(): List<GeoPoint> = buildList {
+    var i = 0
+    while (i + 1 < c.size) { add(GeoPoint(c[i], c[i + 1])); i += 2 }
+}
+
+/** Draw the baked basemap features (roads/paths/water) using [project] for the current view. */
+private fun DrawScope.drawBaseMap(baseMap: BaseMap?, project: (List<GeoPoint>) -> List<Offset>) {
+    val features = baseMap?.features ?: return
+    for (f in features) {
+        val pts = project(f.toGeoPoints())
+        if (pts.size < 2) continue
+        drawPath(
+            pathOf(pts),
+            baseColor(f.t),
+            style = Stroke(baseWidthDp(f.t).dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
+        )
     }
 }
 
@@ -73,6 +110,7 @@ private fun DrawScope.drawOverview(
     routeColor: Color,
     neon: Color,
     glow: Boolean,
+    baseMap: BaseMap?,
 ) {
     val combined = buildList {
         addAll(route); addAll(track); if (current != null) add(current)
@@ -84,6 +122,8 @@ private fun DrawScope.drawOverview(
     val trackPts = projected.subList(idx, idx + track.size).also { idx += track.size }
     val currentPt = if (current != null) projected[idx] else null
 
+    // Basemap first (under the route), fitted with the route's transform.
+    drawBaseMap(baseMap) { RouteProjector.projectWithFitOf(it, combined, size.width, size.height, pad) }
     drawRouteAndTrack(routePts, trackPts, routeColor, neon, glow)
 
     // End-of-route (destination) marker.
@@ -110,6 +150,7 @@ private fun DrawScope.drawFollow(
     routeColor: Color,
     neon: Color,
     glow: Boolean,
+    baseMap: BaseMap?,
 ) {
     val radiusPx = (min(size.width, size.height) / 2f - pad).coerceAtLeast(1f)
     val metersPerPixel = viewRadiusMeters / radiusPx
@@ -120,6 +161,7 @@ private fun DrawScope.drawFollow(
 
     // Rotate the world by -heading around screen center → the route ahead points up.
     rotate(degrees = -heading, pivot = centerPx) {
+        drawBaseMap(baseMap) { RouteProjector.projectCentered(it, current, size.width, size.height, metersPerPixel) }
         drawRouteAndTrack(routePts, trackPts, routeColor, neon, glow)
         routePts.lastOrNull()?.let { end ->
             drawCircle(routeColor, radius = 5.dp.toPx(), center = end)

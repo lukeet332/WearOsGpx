@@ -26,6 +26,7 @@ data class GeoPoint(
 data class GpxRoute(
     val name: String?,
     val points: List<GeoPoint>,
+    val fileName: String? = null,   // source .gpx file, used to find its <base>.map basemap
 ) {
     /** Total path length in meters (sum of haversine segments). */
     val totalDistanceMeters: Double by lazy {

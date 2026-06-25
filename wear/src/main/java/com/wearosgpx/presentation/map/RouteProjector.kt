@@ -24,32 +24,45 @@ object RouteProjector {
         width: Float,
         height: Float,
         paddingPx: Float,
-    ): List<Offset> {
-        if (points.isEmpty() || width <= 0f || height <= 0f) return emptyList()
+    ): List<Offset> = projectWithFitOf(points, points, width, height, paddingPx)
 
-        val centerLatRad = Math.toRadians(points.map { it.latitude }.average())
+    /**
+     * Project [points] using the fit-to-screen transform derived from [fitPoints].
+     * With `fitPoints == points` this is the normal fit; passing the route as
+     * [fitPoints] lets the surrounding basemap be drawn in the same frame (it
+     * extends off-screen, clipped by the canvas).
+     */
+    fun projectWithFitOf(
+        points: List<GeoPoint>,
+        fitPoints: List<GeoPoint>,
+        width: Float,
+        height: Float,
+        paddingPx: Float,
+    ): List<Offset> {
+        if (points.isEmpty() || fitPoints.isEmpty() || width <= 0f || height <= 0f) return emptyList()
+
+        val centerLatRad = Math.toRadians(fitPoints.map { it.latitude }.average())
         val lonScale = cos(centerLatRad).toFloat()
 
-        val xs = FloatArray(points.size) { (points[it].longitude * lonScale).toFloat() }
-        val ys = FloatArray(points.size) { points[it].latitude.toFloat() }
-
-        val minX = xs.min(); val maxX = xs.max()
-        val minY = ys.min(); val maxY = ys.max()
+        val fxs = FloatArray(fitPoints.size) { (fitPoints[it].longitude * lonScale).toFloat() }
+        val fys = FloatArray(fitPoints.size) { fitPoints[it].latitude.toFloat() }
+        val minX = fxs.min(); val maxX = fxs.max()
+        val minY = fys.min(); val maxY = fys.max()
         val spanX = (maxX - minX).coerceAtLeast(1e-9f)
         val spanY = (maxY - minY).coerceAtLeast(1e-9f)
 
         val availW = (width - 2 * paddingPx).coerceAtLeast(1f)
         val availH = (height - 2 * paddingPx).coerceAtLeast(1f)
         val scale = min(availW / spanX, availH / spanY)
-
-        // Center the drawn route within the available area.
         val offsetX = paddingPx + (availW - spanX * scale) / 2f
         val offsetY = paddingPx + (availH - spanY * scale) / 2f
 
         return List(points.size) { i ->
+            val x = (points[i].longitude * lonScale).toFloat()
+            val y = points[i].latitude.toFloat()
             Offset(
-                x = offsetX + (xs[i] - minX) * scale,
-                y = offsetY + (maxY - ys[i]) * scale,   // flip Y
+                x = offsetX + (x - minX) * scale,
+                y = offsetY + (maxY - y) * scale,   // flip Y
             )
         }
     }

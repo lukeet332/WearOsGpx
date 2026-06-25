@@ -45,7 +45,7 @@ class ExerciseClientManager(healthServicesClient: HealthServicesClient) {
         exerciseClient.getCapabilitiesAsync().await()
 
     /**
-     * Warms up GPS + HR before the run starts (Garmin-style "acquiring GPS").
+     * Warms up GPS + HR before the run starts (sports-watch-style "acquiring GPS").
      * Availability updates arrive via [exerciseUpdateFlow]'s onAvailabilityChanged,
      * so by the time the user taps Start there's already a fix.
      */

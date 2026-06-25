@@ -64,6 +64,27 @@ object GpxMeta {
         }
     }.getOrNull()
 
+    /** Just the (lat, lon) track points — used to build the surrounding basemap. */
+    fun readPoints(file: File): List<Pair<Double, Double>> = runCatching {
+        file.inputStream().use { input ->
+            val parser = Xml.newPullParser().apply {
+                setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
+                setInput(input, null)
+            }
+            val pts = ArrayList<Pair<Double, Double>>()
+            var event = parser.eventType
+            while (event != XmlPullParser.END_DOCUMENT) {
+                if (event == XmlPullParser.START_TAG && parser.name in POINT_TAGS) {
+                    val lat = parser.getAttributeValue(null, "lat")?.toDoubleOrNull()
+                    val lon = parser.getAttributeValue(null, "lon")?.toDoubleOrNull()
+                    if (lat != null && lon != null) pts.add(lat to lon)
+                }
+                event = parser.next()
+            }
+            pts
+        }
+    }.getOrDefault(emptyList())
+
     /** Reads an optional <ele> inside the current point element; advances to its END_TAG. */
     private fun readEle(parser: XmlPullParser, pointTag: String): Double? {
         var ele: Double? = null

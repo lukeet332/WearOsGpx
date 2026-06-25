@@ -1,6 +1,6 @@
 # WearOsGpx
 
-A standalone, Garmin-like GPX navigation and run-tracking app for **Wear OS 4+**, built natively in
+A standalone, sports-watch-style GPX navigation and run-tracking app for **Wear OS 4+**, built natively in
 Kotlin + Jetpack Compose and optimized for the OnePlus Watch 2R's dual-chip architecture.
 
 ## Modules

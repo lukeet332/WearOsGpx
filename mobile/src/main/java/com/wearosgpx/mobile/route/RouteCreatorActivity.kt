@@ -42,7 +42,7 @@ import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 
 /**
- * Garmin-style route builder. Two steps: (1) name the route, then (2) the map —
+ * Map-based route builder. Two steps: (1) name the route, then (2) the map —
  * search a start (type-ahead suggestions), tap to plot, live distance, Save
  * (fetches elevation, keeps a local copy, pushes to the watch).
  */

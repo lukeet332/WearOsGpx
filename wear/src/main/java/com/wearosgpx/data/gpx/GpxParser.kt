@@ -12,7 +12,7 @@ import java.time.format.DateTimeParseException
  *
  * It collects every point under <trkpt> (track), <rtept> (route), and <wpt>
  * (waypoint), in document order — which covers the common cases of routes
- * exported by Garmin Connect, Strava, Komoot, etc.
+ * exported by Strava, Komoot, etc.
  *
  * Usage:
  *     context.contentResolver.openInputStream(uri).use { stream ->
