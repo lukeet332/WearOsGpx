@@ -129,7 +129,7 @@ def main() -> None:
     if not API_KEY:
         done("GEMINI_API_KEY not set — skipping (no changes).")
     log = read_log()
-    if not log or not re.search(r"warning:|error:|deprecat", log, re.IGNORECASE):
+    if not log or not re.search(r"warning:|error:|deprecat|FAILED|FAILURE|exception|unresolved", log, re.IGNORECASE):
         done("No actionable warnings/errors in the build log — nothing to do.")
     files = candidate_files(log)
     if not files:
