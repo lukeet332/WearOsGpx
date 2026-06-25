@@ -1,6 +1,7 @@
 package com.wearosgpx.mobile.route
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
@@ -70,6 +71,10 @@ object AiRouteLogic {
 
     fun argString(a: Action, key: String): String? =
         a.args[key]?.jsonPrimitive?.contentOrNull
+
+    /** A string-array arg (e.g. avoid:["steps","fords"]); empty if missing or not an array. */
+    fun argStringList(a: Action, key: String): List<String> =
+        (a.args[key] as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList()
 
     /** Pull the first JSON object out of [text], unwrapping ``` / ```json fences. */
     private fun extractJson(text: String): String? {

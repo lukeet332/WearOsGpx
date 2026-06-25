@@ -48,6 +48,16 @@ class AiRouteLogicTest {
     }
 
     @Test
+    fun argStringList_readsAnArrayArg() {
+        val a = AiRouteLogic.parseAction(
+            """{"action":"tool","tool":"round_trip","args":{"avoid":["steps","fords"]}}"""
+        )
+        assertEquals(listOf("steps", "fords"), AiRouteLogic.argStringList(a, "avoid"))
+        // missing arg -> empty, never null
+        assertTrue(AiRouteLogic.argStringList(a, "nope").isEmpty())
+    }
+
+    @Test
     fun parseAction_plainTextIsTreatedAsReply() {
         val a = AiRouteLogic.parseAction("Sure — roughly how far do you want to run?")
         assertEquals(Kind.REPLY, a.kind)

@@ -27,6 +27,17 @@ object GpxBuilder {
         append("</gpx>\n")
     }
 
+    /**
+     * Return [gpx] with its track name replaced by [newName] (preserving all geometry +
+     * elevation), so renaming a saved route doesn't have to rebuild it. Pure: if there's no
+     * <name> element the document is returned unchanged.
+     */
+    fun renamed(gpx: String, newName: String): String =
+        gpx.replaceFirst(
+            Regex("<name>.*?</name>", RegexOption.DOT_MATCHES_ALL),
+            "<name>${escape(newName)}</name>",
+        )
+
     private fun escape(s: String): String =
         s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 }

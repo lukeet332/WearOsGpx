@@ -34,4 +34,19 @@ class GpxBuilderTest {
         val gpx = GpxBuilder.build(name = "A & B <loop>", points = listOf(0.0 to 0.0, 1.0 to 1.0))
         assertTrue(gpx.contains("A &amp; B &lt;loop&gt;"))
     }
+
+    @Test
+    fun renamed_swapsNameButKeepsGeometry() {
+        val gpx = GpxBuilder.build("Old Name", listOf(51.5 to -0.1, 51.51 to -0.12), listOf(10.0, 20.0))
+        val out = GpxBuilder.renamed(gpx, "New & Better")
+        assertTrue(out.contains("<name>New &amp; Better</name>"))
+        assertTrue("old name gone", !out.contains("Old Name"))
+        assertTrue("geometry preserved", out.contains("lat=\"51.500000\"") && out.contains("<ele>20.0</ele>"))
+    }
+
+    @Test
+    fun renamed_noNameTagLeavesDocUnchanged() {
+        val doc = "<gpx><trk><trkseg></trkseg></trk></gpx>"
+        assertTrue(GpxBuilder.renamed(doc, "X") == doc)
+    }
 }
