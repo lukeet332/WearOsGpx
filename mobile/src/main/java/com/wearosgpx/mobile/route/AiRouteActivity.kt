@@ -73,6 +73,26 @@ class AiRouteActivity : ComponentActivity() {
 
     private lateinit var agent: AiRouteAgent
 
+    /** Lets the agent list + delete the user's saved routes (deletes go to the recycle bin). */
+    private val routeOps = object : RouteOps {
+        override suspend fun list(): List<RouteOps.Info> = withContext(Dispatchers.IO) {
+            PhoneRouteStore.list(this@AiRouteActivity).mapNotNull { f ->
+                val meta = GpxMeta.read(f) ?: return@mapNotNull null
+                RouteOps.Info(f.name, meta.name ?: f.nameWithoutExtension, meta.distanceMeters)
+            }
+        }
+
+        override suspend fun delete(fileName: String): Boolean = withContext(Dispatchers.IO) {
+            val exists = PhoneRouteStore.fileFor(this@AiRouteActivity, fileName) != null
+            if (exists) {
+                PhoneRouteStore.moveToTrash(this@AiRouteActivity, fileName)
+                PhoneRouteStore.deleteBaseMap(this@AiRouteActivity, fileName)
+                runCatching { WatchRoutes.delete(applicationContext, fileName) }
+            }
+            exists
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         agent = AiRouteAgent(
@@ -81,6 +101,7 @@ class AiRouteActivity : ComponentActivity() {
             baseUrl = AppSettings.aiBaseUrl(this),
             orsKey = AppSettings.effectiveOrsKey(this),
             currentLocation = lastKnownLocation(),
+            routeOps = routeOps,
         )
         setContent {
             AiRouteScreen(
@@ -94,11 +115,16 @@ class AiRouteActivity : ComponentActivity() {
     private suspend fun saveRoute(turn: AiRouteAgent.Turn.RouteReady): Boolean =
         withContext(Dispatchers.IO) {
             runCatching {
-                val name = PhoneRouteStore.safeName(turn.name)
+                // On an update, keep the same file name but version the old copy to the recycle
+                // bin first (a safety buffer, since the AI can get it wrong); else create new.
+                val fileName = turn.replaceFileName?.let {
+                    PhoneRouteStore.moveToTrash(this@AiRouteActivity, it)
+                    PhoneRouteStore.safeName(it)
+                } ?: PhoneRouteStore.safeName(turn.name)
                 val gpx = GpxBuilder.build(turn.name, turn.geometry.points, turn.geometry.elevations)
                 val bytes = gpx.toByteArray()
-                PhoneRouteStore.save(this@AiRouteActivity, name, bytes)
-                runCatching { WatchRoutes.sendRoute(applicationContext, name, bytes) }
+                PhoneRouteStore.save(this@AiRouteActivity, fileName, bytes)
+                runCatching { WatchRoutes.sendRoute(applicationContext, fileName, bytes) }
                 true
             }.getOrDefault(false)
         }

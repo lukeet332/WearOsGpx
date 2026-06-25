@@ -34,6 +34,7 @@ object AiRouteLogic {
         val tool: String? = null,
         val args: JsonObject = JsonObject(emptyMap()),
         val name: String? = null,
+        val replace: String? = null,   // on FINAL: file name of an existing route to update (else a new route)
     )
 
     fun parseAction(raw: String): Action {
@@ -52,6 +53,7 @@ object AiRouteLogic {
                         Kind.FINAL,
                         name = obj["name"]?.jsonPrimitive?.contentOrNull,
                         reply = obj["reply"]?.jsonPrimitive?.contentOrNull,
+                        replace = obj["replace"]?.jsonPrimitive?.contentOrNull,
                     )
                     "reply" -> return Action(
                         Kind.REPLY,
