@@ -3,8 +3,9 @@ name: AI maintenance
 # AI housekeeping (twice a week): capture the Gradle lint/compile logs, ask the model
 # to fix deprecated Jetpack Compose / Kotlin APIs and obvious bugs, RE-RUN THE TESTS to
 # prove the change is safe, then open a PR. The PR still has to pass the CI gate before
-# auto-merge — the bot never merges unverified code. The "heavy thinking" runs on
-# GitHub Models (GPT-4.1) via GITHUB_TOKEN (models:read), with Gemini as a fallback.
+# auto-merge — the bot never merges unverified code. The primary + fallback models are
+# configured in .github/ai_model.json (default: GitHub Models GPT-4.1 + a fallback) and
+# re-evaluated weekly by ai-model-review.yml, so the fallback isn't necessarily Gemini.
 on:
   schedule:
     - cron: '0 6 * * 1,4'      # 06:00 UTC every Monday and Thursday
@@ -87,7 +88,7 @@ jobs:
             .github/AI_CONTEXT.md
           body: |
             Automated maintenance proposed by **${{ steps.fix.outputs.bot_label || 'the AI fix bot' }}**
-            (`${{ steps.fix.outputs.model_used }}`, Gemini fallback) from the twice-weekly run.
+            (`${{ steps.fix.outputs.model_used }}`) from the twice-weekly run.
 
             - Source: Gradle lint + `compileDebugKotlin` logs.
             - These changes already passed `:mobile:testDebugUnitTest` + `:wear:testDebugUnitTest`

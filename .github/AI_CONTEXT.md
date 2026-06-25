@@ -1,7 +1,8 @@
 # AI_CONTEXT.md — context for the automated fix bot
 
-This file is fed to the AI fix bot (GitHub Models GPT-4.1, Gemini fallback) before it
-proposes a fix, so its changes stay on-brand and respect existing decisions. Keep it
+This file is fed to the AI fix bot (whichever primary + fallback model `ai_model.json`
+configures) before it proposes a fix, so its changes stay on-brand and respect existing
+decisions. Keep it
 **accurate and concise**. The bot may *append* a learning to the bottom section; humans
 own the rest. (For the full developer spec, see `CLAUDE.md` at the repo root.)
 
