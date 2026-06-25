@@ -25,7 +25,13 @@ object RoutingService {
             if (waypoints.size < 2 || apiKey.isBlank()) return@withContext null
             // ORS expects [lon, lat] pairs.
             val coords = waypoints.joinToString(",") { "[${it.second},${it.first}]" }
-            val payload = """{"coordinates":[$coords]}"""
+            // "fastest" biases toward direct, main, accessible ways instead of the
+            // default "recommended" weighting that favours quiet/green paths (which
+            // produced windy detours); avoid steps/fords that force awkward detours.
+            val payload = """{"coordinates":[$coords],""" +
+                """"preference":"fastest",""" +
+                """"options":{"avoid_features":["steps","fords"]},""" +
+                """"instructions":false}"""
 
             runCatching {
                 val conn = (URL(ENDPOINT).openConnection() as HttpURLConnection).apply {
