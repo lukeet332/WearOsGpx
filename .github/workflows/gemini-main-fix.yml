@@ -63,6 +63,9 @@ jobs:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
         run: python .github/scripts/ai_fix.py             # active model from .github/ai_model.json
 
+      - name: Auto-format the changed Kotlin (ktlint)
+        run: bash .github/scripts/format_changed.sh
+
       # Opens a PR only if the model actually changed something. The PR is gated by CI
       # like any other; pr-self-heal.yml will iterate if the first try isn't enough.
       - name: Open a fix PR
