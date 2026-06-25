@@ -3,20 +3,13 @@ package com.wearosgpx.mobile
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.location.LocationManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -29,8 +22,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -38,9 +29,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
@@ -50,7 +39,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,12 +62,10 @@ import androidx.core.content.IntentCompat
 import androidx.lifecycle.lifecycleScope
 import com.wearosgpx.mobile.health.HealthConnectWriter
 import com.wearosgpx.mobile.route.BaseMapService
-import com.wearosgpx.mobile.route.GeocodingService
 import com.wearosgpx.mobile.route.GpxMeta
 import com.wearosgpx.mobile.route.AiRouteActivity
 import com.wearosgpx.mobile.route.PhoneRouteStore
 import com.wearosgpx.mobile.route.RouteCreatorActivity
-import com.wearosgpx.mobile.route.RouteDiscoveryService
 import com.wearosgpx.mobile.route.RoutePreviewMapView
 import com.wearosgpx.mobile.settings.AppSettings
 import com.wearosgpx.mobile.settings.SettingsActivity
@@ -89,7 +75,6 @@ import com.wearosgpx.mobile.sync.WatchRoutes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withContext
 
 private val Neon = Color(0xFF39FF14)
@@ -159,46 +144,8 @@ class MainActivity : ComponentActivity() {
                 onSendToWatch = ::sendToWatch,
                 onRefresh = ::refreshRoutes,
                 onResync = { syncQueuedRuns(auto = false) },
-                onAddDiscovered = ::addDiscoveredRoute,
-                lastLocation = ::lastKnownLocation,
             )
         }
-    }
-
-    /** Fetch a discovered OSM route's geometry → GPX → save locally + push to watch. */
-    private fun addDiscoveredRoute(route: RouteDiscoveryService.DiscoveredRoute) {
-        lifecycleScope.launch {
-            Toast.makeText(this@MainActivity, "Fetching “${route.name}”…", Toast.LENGTH_SHORT).show()
-            val ok = runCatching {
-                val gpx = withContext(Dispatchers.IO) { RouteDiscoveryService.buildGpx(route) }
-                    ?: error("no geometry")
-                val name = PhoneRouteStore.safeName(route.name)
-                val bytes = gpx.toByteArray()
-                PhoneRouteStore.save(this@MainActivity, name, bytes)
-                runCatching { WatchRoutes.sendRoute(applicationContext, name, bytes) }
-                true
-            }.getOrDefault(false)
-            Toast.makeText(
-                this@MainActivity,
-                if (ok) "Added “${route.name}”" else "Couldn't fetch that route",
-                Toast.LENGTH_LONG,
-            ).show()
-            if (ok) attachBaseMap(route.name)
-            delay(500); refreshRoutes()
-        }
-    }
-
-    /** Best-effort last-known device location for "near me" search; null if unavailable. */
-    private fun lastKnownLocation(): Pair<Double, Double>? {
-        val fine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-        val coarse = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
-        if (fine != PackageManager.PERMISSION_GRANTED && coarse != PackageManager.PERMISSION_GRANTED) return null
-        return runCatching {
-            val lm = getSystemService(LocationManager::class.java) ?: return null
-            lm.getProviders(true).asReversed()
-                .firstNotNullOfOrNull { p -> lm.getLastKnownLocation(p) }
-                ?.let { it.latitude to it.longitude }
-        }.getOrNull()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -543,8 +490,6 @@ private fun CompanionApp(
     onSendToWatch: (RouteRow) -> Unit,
     onRefresh: () -> Unit,
     onResync: () -> Unit,
-    onAddDiscovered: (RouteDiscoveryService.DiscoveredRoute) -> Unit,
-    lastLocation: () -> Pair<Double, Double>?,
 ) {
     MaterialTheme(
         colorScheme = darkColorScheme(
@@ -556,7 +501,6 @@ private fun CompanionApp(
         )
     ) {
         var detail by remember { mutableStateOf<RouteRow?>(null) }
-        var showDiscover by remember { mutableStateOf(false) }
         var showTrash by remember { mutableStateOf(false) }
 
         Column(
@@ -603,12 +547,6 @@ private fun CompanionApp(
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A), contentColor = Neon),
             ) { Text("✨ Create route with AI", fontWeight = FontWeight.SemiBold) }
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = { showDiscover = true },
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A), contentColor = Neon),
-            ) { Text("Discover routes (OpenStreetMap)") }
             Spacer(Modifier.height(8.dp))
             Button(
                 onClick = onImport,
@@ -664,126 +602,6 @@ private fun CompanionApp(
                 onRestore = { onRestore(it) },
                 onDismiss = { showTrash = false },
             )
-        }
-
-        // Back closes the Discover overlay instead of exiting the app.
-        BackHandler(enabled = showDiscover) { showDiscover = false }
-        AnimatedVisibility(
-            visible = showDiscover,
-            enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
-            exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
-        ) {
-            DiscoverScreen(
-                onAdd = onAddDiscovered,
-                lastLocation = lastLocation,
-                onClose = { showDiscover = false },
-            )
-        }
-    }
-}
-
-/** Full-screen route discovery: search OSM trails by name or near a place, add to watch. */
-@Composable
-private fun DiscoverScreen(
-    onAdd: (RouteDiscoveryService.DiscoveredRoute) -> Unit,
-    lastLocation: () -> Pair<Double, Double>?,
-    onClose: () -> Unit,
-) {
-    val scope = rememberCoroutineScope()
-    var query by remember { mutableStateOf("") }
-    var loading by remember { mutableStateOf(false) }
-    var results by remember { mutableStateOf<List<RouteDiscoveryService.DiscoveredRoute>>(emptyList()) }
-    var status by remember { mutableStateOf<String?>("Search a trail name, or a place to find nearby routes.") }
-
-    fun search(byName: Boolean) {
-        loading = true; status = null; results = emptyList()
-        scope.launch {
-            val found = runCatching {
-                if (byName) {
-                    RouteDiscoveryService.searchByName(query)
-                } else {
-                    val loc = if (query.isBlank()) lastLocation()
-                        else GeocodingService.search(query)?.let { it.lat to it.lon }
-                    if (loc == null) emptyList()
-                    else RouteDiscoveryService.searchNearby(loc.first, loc.second)
-                }
-            }.getOrDefault(emptyList())
-            results = found
-            loading = false
-            status = when {
-                found.isNotEmpty() -> null
-                byName -> "No trails found for that name."
-                query.isBlank() -> "No location available — type a place name."
-                else -> "No routes found near there."
-            }
-        }
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-            .systemBarsPadding()
-            .padding(20.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("Discover routes", color = Neon, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-            TextButton(onClick = onClose) { Text("✕", color = Color.White, fontSize = 20.sp) }
-        }
-        Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            singleLine = true,
-            label = { Text("Trail name or place") },
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Button(
-                onClick = { search(byName = true) },
-                enabled = query.isNotBlank(),
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = Neon, contentColor = Color.Black),
-            ) { Text("By name") }
-            Button(
-                onClick = { search(byName = false) },
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A), contentColor = Neon),
-            ) { Text(if (query.isBlank()) "Near me" else "Near place") }
-        }
-        Spacer(Modifier.height(16.dp))
-
-        if (loading) {
-            Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Neon)
-            }
-        }
-        status?.let { Text(it, color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp) }
-
-        LazyColumn(modifier = Modifier.fillMaxWidth()) {
-            items(results) { route ->
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF161616)),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(14.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(route.name, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                            Text(route.activity, color = Neon, fontSize = 12.sp)
-                        }
-                        TextButton(onClick = { onAdd(route); onClose() }) { Text("Add", color = Neon) }
-                    }
-                }
-            }
         }
     }
 }
