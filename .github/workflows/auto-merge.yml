@@ -28,16 +28,24 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      # Dependabot: auto-merge patch/minor only; leave MAJOR bumps for a human.
-      - name: Enable auto-merge for Dependabot (non-major)
-        if: github.actor == 'dependabot[bot]' && steps.meta.outputs.update-type != 'version-update:semver-major'
+      # Dependabot: auto-merge patch/minor for any ecosystem, PLUS majors for the
+      # github-actions ecosystem (workflow action bumps are low-risk infra hygiene and
+      # CI still has to pass). Leave MAJOR library/build bumps (gradle) for a human.
+      - name: Enable auto-merge for Dependabot
+        if: >
+          github.actor == 'dependabot[bot]' &&
+          (steps.meta.outputs.update-type != 'version-update:semver-major' ||
+           steps.meta.outputs.package-ecosystem == 'github_actions')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh pr merge --auto --squash "${{ github.event.pull_request.html_url }}"
 
       - name: Note skipped major Dependabot bump
-        if: github.actor == 'dependabot[bot]' && steps.meta.outputs.update-type == 'version-update:semver-major'
-        run: echo "::notice::Major dependency bump — left for manual review (not auto-merged)."
+        if: >
+          github.actor == 'dependabot[bot]' &&
+          steps.meta.outputs.update-type == 'version-update:semver-major' &&
+          steps.meta.outputs.package-ecosystem != 'github_actions'
+        run: echo "::notice::Major non-actions bump — left for manual review (not auto-merged)."
 
       # Gemini bot (and any human-labelled PR): merge when checks pass. Use BOT_PAT
       # (a real user), not GITHUB_TOKEN — so the resulting merge commit TRIGGERS the
