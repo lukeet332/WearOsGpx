@@ -11,6 +11,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,19 +38,29 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.cos
+import kotlin.math.min
 import androidx.health.connect.client.PermissionController
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
@@ -810,7 +821,25 @@ private fun RouteDetailDialog(
         containerColor = Color(0xFF1A1A1A),
         title = { Text(row.name, color = Color.White) },
         text = {
+            val context = LocalContext.current
+            val points by produceState(emptyList<Pair<Double, Double>>(), row.fileName, row.onPhone) {
+                value = if (row.onPhone && row.fileName != null) {
+                    withContext(Dispatchers.IO) {
+                        PhoneRouteStore.fileFor(context, row.fileName)?.let { GpxMeta.readPoints(it) } ?: emptyList()
+                    }
+                } else emptyList()
+            }
             Column {
+                if (points.size >= 2) {
+                    RoutePreviewMap(
+                        points = points,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(160.dp)
+                            .clip(RoundedCornerShape(10.dp)),
+                    )
+                    Spacer(Modifier.height(12.dp))
+                }
                 DetailRow("Distance", "%.2f km".format(row.distanceMeters / 1000))
                 DetailRow("Ascent", "%.0f m".format(row.ascentMeters))
                 DetailRow("Track points", row.pointCount.toString())
@@ -830,6 +859,39 @@ private fun RouteDetailDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Close", color = Neon) } },
     )
+}
+
+/** Route preview in the watch's neon-on-black style: the GPX line fitted on black. */
+@Composable
+private fun RoutePreviewMap(points: List<Pair<Double, Double>>, modifier: Modifier = Modifier) {
+    Canvas(modifier.background(Color.Black)) {
+        if (points.size < 2) return@Canvas
+        val centerLatRad = Math.toRadians(points.map { it.first }.average())
+        val lonScale = cos(centerLatRad).toFloat()
+        val xs = points.map { (it.second * lonScale).toFloat() }
+        val ys = points.map { it.first.toFloat() }
+        val minX = xs.min(); val maxX = xs.max(); val minY = ys.min(); val maxY = ys.max()
+        val spanX = (maxX - minX).coerceAtLeast(1e-9f)
+        val spanY = (maxY - minY).coerceAtLeast(1e-9f)
+        val pad = 14.dp.toPx()
+        val availW = (size.width - 2 * pad).coerceAtLeast(1f)
+        val availH = (size.height - 2 * pad).coerceAtLeast(1f)
+        val scale = min(availW / spanX, availH / spanY)
+        val offX = pad + (availW - spanX * scale) / 2f
+        val offY = pad + (availH - spanY * scale) / 2f
+        val pts = points.indices.map { i ->
+            Offset(offX + (xs[i] - minX) * scale, offY + (maxY - ys[i]) * scale)
+        }
+        val path = Path().apply {
+            moveTo(pts[0].x, pts[0].y)
+            for (i in 1..pts.lastIndex) lineTo(pts[i].x, pts[i].y)
+        }
+        drawPath(path, Neon.copy(alpha = 0.15f), style = Stroke(10.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+        drawPath(path, Neon, style = Stroke(2.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+        drawCircle(Neon, radius = 4.dp.toPx(), center = pts.first())                 // start
+        drawCircle(Color.White, radius = 4.dp.toPx(), center = pts.last())           // end
+        drawCircle(Neon, radius = 4.dp.toPx(), center = pts.last(), style = Stroke(1.5.dp.toPx()))
+    }
 }
 
 @Composable

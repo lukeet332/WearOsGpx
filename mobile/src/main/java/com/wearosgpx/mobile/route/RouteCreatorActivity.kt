@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.Gravity
@@ -66,6 +67,16 @@ class RouteCreatorActivity : ComponentActivity() {
     ) { result -> if (result.values.any { it }) enableMyLocation() }
 
     private val neon = Color.parseColor("#FF39FF14")
+
+    /** Inverts the light OSM tiles into a dark map (night-mode trick). */
+    private val DARK_MAP_FILTER = ColorMatrixColorFilter(
+        floatArrayOf(
+            -1f, 0f, 0f, 0f, 255f,
+            0f, -1f, 0f, 0f, 255f,
+            0f, 0f, -1f, 0f, 255f,
+            0f, 0f, 0f, 1f, 0f,
+        ),
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -137,6 +148,9 @@ class RouteCreatorActivity : ComponentActivity() {
             zoomController.setVisibility(CustomZoomButtonsController.Visibility.ALWAYS)
             controller.setZoom(14.0)
             controller.setCenter(GeoPoint(51.5074, -0.1278))
+            // Dark map to match the watch: invert the (light) OSM tiles. The neon
+            // route + markers draw as overlays on top, unaffected by this filter.
+            overlayManager.tilesOverlay.setColorFilter(DARK_MAP_FILTER)
         }
         polyline = Polyline(map).apply {
             outlinePaint.color = neon
