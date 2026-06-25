@@ -125,10 +125,17 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.OpenDocument()
     ) { uri -> uri?.let { importGpx(it) } }
 
+    // First-launch permission flow: ask for location, then chain into Health Connect
+    // (Android shows one prompt at a time, so HC is requested from this callback).
+    private val requestLocation = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { requestHealthConnectIfNeeded() }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         handleStravaRedirect(intent)
         handleIncomingGpx(intent)
+        requestInitialPermissionsOnce()
         setContent {
             val available by hcAvailable
             val granted by hcGranted
@@ -296,6 +303,41 @@ class MainActivity : ComponentActivity() {
                 val msg = if (written > 0) "Synced $written run(s) to Health Connect" else "No new runs to sync"
                 Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
             }
+        }
+    }
+
+    /**
+     * On first launch, proactively request every runtime permission the app needs:
+     * location (for "Create route on map" + "near me" discovery), then Health Connect
+     * (so watch runs can be written). Runs once — tracked in SharedPreferences — so we
+     * don't nag on every open; the in-app buttons cover later re-requests.
+     */
+    private fun requestInitialPermissionsOnce() {
+        val prefs = getSharedPreferences("perms", MODE_PRIVATE)
+        if (prefs.getBoolean("requested_initial", false)) return
+        prefs.edit().putBoolean("requested_initial", true).apply()
+
+        val haveLocation =
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (!haveLocation) {
+            // Location dialog first; Health Connect is requested from its result callback.
+            requestLocation.launch(
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+            )
+        } else {
+            requestHealthConnectIfNeeded()
+        }
+    }
+
+    /** Open the Health Connect permission screen if HC is available and not yet granted. */
+    private fun requestHealthConnectIfNeeded() {
+        val writer = HealthConnectWriter(this)
+        if (!writer.isAvailable()) { hcAvailable.value = false; return }
+        lifecycleScope.launch {
+            val granted = runCatching { writer.hasAllPermissions() }.getOrDefault(false)
+            hcGranted.value = granted
+            if (!granted) requestPermissions.launch(HealthConnectWriter.PERMISSIONS)
         }
     }
 
