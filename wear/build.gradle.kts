@@ -28,7 +28,7 @@ android {
         // CI sets VERSION_CODE (e.g. the run number). Wear is offset so it stays
         // distinct from the phone AAB within the same Play release.
         versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1) + 100_000
-        versionName = "1.0"
+        versionName = System.getenv("VERSION_NAME") ?: "1.0"   // CI sets the AI-decided semver
     }
 
     signingConfigs {

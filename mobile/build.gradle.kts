@@ -33,7 +33,7 @@ android {
         targetSdk = 35
         // CI sets VERSION_CODE (e.g. the run number); ORS key may also come from env in CI.
         versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
-        versionName = "1.0"
+        versionName = System.getenv("VERSION_NAME") ?: "1.0"   // CI sets the AI-decided semver
         val orsKey = System.getenv("ORS_API_KEY") ?: localProps.getProperty("ORS_API_KEY", "")
         buildConfigField("String", "ORS_API_KEY", "\"$orsKey\"")
         // Strava API app credentials (put STRAVA_CLIENT_ID / STRAVA_CLIENT_SECRET in

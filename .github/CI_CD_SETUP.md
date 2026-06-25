@@ -70,6 +70,25 @@ tokens** → only this repo → Repository permissions: **Contents: Read and wri
 - **Bots never merge unverified code:** required `unit-tests` check gates every
   merge, and the Gemini job additionally re-runs the tests before even opening a PR.
 
+## 5b. PR-only `main` + AI-versioned releases
+
+- **`release.yml`** runs on every push to `main` (i.e. every PR merge): it asks Gemini
+  to classify the merged commits as **major / minor / patch**, computes the next
+  SemVer from the last `vX.Y.Z` tag, builds **signed release APKs** for both modules
+  (`VERSION_NAME` flows into both `build.gradle.kts`), tags the commit, and publishes a
+  **GitHub Release** with `WearOsGpx-mobile-vX.Y.Z.apk` + `WearOsGpx-wear-vX.Y.Z.apk`
+  attached. (No Gemini key → it falls back to a conventional-commits heuristic.)
+- **Blocking direct pushes to `main`** (PR-only) needs **branch protection**, which —
+  like auto-merge — is **unavailable on a private Free repo** (you saw the 403:
+  *"make this repository public to enable this feature"*). So:
+  1. **Make the repo public** (Settings → General → Danger Zone → Change visibility)
+     *or* upgrade to GitHub Pro.
+  2. Run **`bash .github/scripts/enable_branch_protection.sh`** (or click the UI per
+     §3–4). It sets: PR required, **no direct pushes (incl. admins)**, must pass
+     `unit-tests`, 0 required approvals (so bots self-merge), linear history.
+- After that, **everything — including your own changes — goes via PRs**; merging to
+  `main` is what cuts a new versioned release.
+
 ## 6. First run / verifying
 1. Add the secrets + toggles above.
 2. Push these files to `main` → `ci.yml` runs once → select `unit-tests` in branch
