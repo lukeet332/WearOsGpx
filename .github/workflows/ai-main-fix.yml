@@ -1,10 +1,10 @@
-name: Gemini fix broken main
+name: AI fix broken main
 
 # Safety net: if CI ever goes RED on main (a merge slipped something through, an
-# external/toolchain change broke the build, etc.), Gemini reads the failure log and
-# opens a fix PR. That PR goes through the normal gate (CI → auto-merge), and if
-# Gemini's first attempt is imperfect, pr-self-heal.yml iterates on it. Runs from
-# main via workflow_run, so it has full secret access.
+# external/toolchain change broke the build, etc.), the AI fix bot reads the failure log
+# and opens a fix PR. That PR goes through the normal gate (CI → auto-merge), and if the
+# first attempt is imperfect, pr-self-heal.yml iterates on it. Runs from main via
+# workflow_run, so it has full secret access.
 on:
   workflow_run:
     workflows: ["CI"]
@@ -17,7 +17,7 @@ permissions:
   models: read                  # GitHub Models inference via GITHUB_TOKEN
 
 concurrency:
-  group: gemini-main-fix
+  group: ai-main-fix
   cancel-in-progress: false
 
 jobs:
@@ -72,9 +72,9 @@ jobs:
         uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.BOT_PAT }}
-          branch: gemini/main-fix
+          branch: ai-fix(${{ steps.fix.outputs.bot_label || 'model' }})/main-fix
           delete-branch: true
-          commit-message: "fix: repair broken main (CI failure) [gemini-pr-fix]"
+          commit-message: "fix: repair broken main (CI failure) [ai-pr-fix]"
           title: "🤖 ${{ steps.fix.outputs.bot_label || 'ai-bot' }}: fix broken main (CI failure)"
           labels: automerge
           add-paths: |

@@ -16,7 +16,7 @@ permissions:
 jobs:
   auto-merge:
     runs-on: ubuntu-latest
-    # Only our bots: Dependabot, or any PR carrying the "automerge" label (Gemini bot).
+    # Only our bots: Dependabot, or any PR carrying the "automerge" label (the AI bots).
     if: >
       github.actor == 'dependabot[bot]' ||
       contains(github.event.pull_request.labels.*.name, 'automerge')
@@ -47,7 +47,7 @@ jobs:
           steps.meta.outputs.package-ecosystem != 'github_actions'
         run: echo "::notice::Major non-actions bump — left for manual review (not auto-merged)."
 
-      # Gemini bot (and any human-labelled PR): merge when checks pass. Use BOT_PAT
+      # AI bots (and any human-labelled PR): merge when checks pass. Use BOT_PAT
       # (a real user), not GITHUB_TOKEN — so the resulting merge commit TRIGGERS the
       # release workflow (GITHUB_TOKEN-authored merges don't trigger `push` workflows).
       - name: Enable auto-merge for labelled PRs
