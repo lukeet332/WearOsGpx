@@ -11,7 +11,6 @@ import com.google.android.gms.wearable.Asset
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.Wearable
 import com.wearosgpx.mobile.health.HealthConnectWriter
-import com.wearosgpx.mobile.strava.StravaClient
 import kotlinx.coroutines.tasks.await
 import kotlinx.serialization.json.Json
 import java.io.ByteArrayOutputStream
@@ -39,10 +38,8 @@ object RunImporter {
     private val json = Json { ignoreUnknownKeys = true }
 
     /**
-     * Push a run to all destinations it isn't on yet — Health Connect and (if the
-     * user has connected it) Strava. The two are independent and separately
-     * de-duplicated, so a Strava failure doesn't block HC, and a run that was
-     * HC-imported before Strava was connected still uploads later. Returns true if
+     * Write a run to Health Connect if it isn't there yet (de-duped by start time).
+     * Health Connect is the single sync target — OHealth reads from it. Returns true if
      * anything new was written.
      */
     suspend fun importPayload(context: Context, payload: RunPayload, trigger: String): Boolean {
@@ -67,11 +64,6 @@ object RunImporter {
                 Log.i(TAG, "[$trigger] WROTE run $key to Health Connect ✓")
                 didSomething = true
             }.onFailure { Log.e(TAG, "[$trigger] HC import FAILED for run $key", it) }
-        }
-
-        // Strava (best-effort; only if the user connected it).
-        if (StravaClient.isConnected(context)) {
-            if (StravaClient.uploadRun(context, payload, trigger) != null) didSomething = true
         }
 
         return didSomething

@@ -46,7 +46,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wearosgpx.mobile.route.RecommendedModels
-import com.wearosgpx.mobile.strava.StravaClient
 
 private val Neon = Color(0xFF39FF14)
 
@@ -84,8 +83,6 @@ private fun SettingsScreen(prompt: Boolean, onBack: () -> Unit) {
         var ors by remember { mutableStateOf(AppSettings.storedOrsKey(context)) }
         var aiKey by remember { mutableStateOf(AppSettings.aiKey(context)) }
         var modelChoice by remember { mutableStateOf(AppSettings.storedAiModel(context)) }  // "" = auto/recommended
-        var stravaConnected by remember { mutableStateOf(StravaClient.isConnected(context)) }
-        val athlete = remember { StravaClient.connectedAthlete(context) }
 
         fun saveAll() {
             AppSettings.setOrsKey(context, ors)
@@ -188,40 +185,6 @@ private fun SettingsScreen(prompt: Boolean, onBack: () -> Unit) {
                     value = ors, onValueChange = { ors = it }, singleLine = true,
                     label = { Text("ORS API key (optional)") }, modifier = Modifier.fillMaxWidth(),
                 )
-            }
-
-            // ---- Strava (optional, OAuth — not a key field) ----
-            Spacer(Modifier.height(16.dp))
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1A1A)),
-            ) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("Strava (optional)", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        if (stravaConnected) "✓ Connected${athlete?.let { " · $it" } ?: ""}. Finished runs upload automatically, and you can import your own Strava routes & runs as routes (on the home screen). If Import doesn't appear, reconnect to grant read access."
-                        else "Auto-upload finished runs to Strava, and import your own Strava routes & past runs as routes (e.g. reuse a parkrun you've done). Your primary sync is still Health Connect — Strava is an extra.",
-                        color = if (stravaConnected) Color(0xFFFC4C02) else Color.White.copy(alpha = 0.7f),
-                        fontSize = 13.sp,
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    if (stravaConnected) {
-                        TextButton(onClick = {
-                            StravaClient.disconnect(context); stravaConnected = false
-                            Toast.makeText(context, "Disconnected from Strava", Toast.LENGTH_SHORT).show()
-                        }) { Text("Disconnect Strava", color = Color(0xFFFF6B6B)) }
-                    } else {
-                        Button(
-                            onClick = {
-                                if (!StravaClient.isConfigured()) {
-                                    Toast.makeText(context, "Strava API keys not set in this build.", Toast.LENGTH_LONG).show()
-                                } else open(StravaClient.authorizeUrl())
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFC4C02), contentColor = Color.White),
-                        ) { Text("Connect Strava", fontWeight = FontWeight.SemiBold) }
-                    }
-                }
             }
 
             Spacer(Modifier.height(24.dp))
