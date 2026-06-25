@@ -73,6 +73,7 @@ import androidx.core.content.FileProvider
 import androidx.core.content.IntentCompat
 import androidx.lifecycle.lifecycleScope
 import com.wearosgpx.mobile.health.HealthConnectWriter
+import com.wearosgpx.mobile.route.BaseMap
 import com.wearosgpx.mobile.route.BaseMapService
 import com.wearosgpx.mobile.route.GeocodingService
 import com.wearosgpx.mobile.route.GpxMeta
@@ -325,6 +326,10 @@ class MainActivity : ComponentActivity() {
                 delay(1200)
                 routes.value = withContext(Dispatchers.IO) { buildRows() }
             }
+            // Ensure every phone route has a basemap on the watch (idempotent — only
+            // fetches+pushes once per route, covers creator/discovery/import alike).
+            routes.value.filter { it.onPhone && it.fileName != null }
+                .forEach { attachBaseMap(it.fileName!!) }
         }
     }
 
@@ -388,13 +393,18 @@ class MainActivity : ComponentActivity() {
      */
     private fun attachBaseMap(rawName: String) {
         val fileName = PhoneRouteStore.safeName(rawName)
+        val prefs = getSharedPreferences("basemap", MODE_PRIVATE)
+        if (prefs.getStringSet("done", emptySet())!!.contains(fileName)) return   // built once already
         lifecycleScope.launch {
             runCatching {
                 val file = PhoneRouteStore.fileFor(applicationContext, fileName) ?: return@runCatching
                 val points = withContext(Dispatchers.IO) { GpxMeta.readPoints(file) }
                 if (points.size < 2) return@runCatching
                 val mapBytes = withContext(Dispatchers.IO) { BaseMapService.build(points) } ?: return@runCatching
-                WatchRoutes.sendBaseMap(applicationContext, fileName, mapBytes)
+                PhoneRouteStore.saveBaseMap(applicationContext, fileName, mapBytes)   // local copy for previews
+                runCatching { WatchRoutes.sendBaseMap(applicationContext, fileName, mapBytes) }  // DataClient queues + delivers
+                prefs.edit().putStringSet("done", prefs.getStringSet("done", emptySet())!! + fileName).apply()
+                routes.value = withContext(Dispatchers.IO) { buildRows() }   // refresh so the preview picks it up
             }
         }
     }
@@ -403,7 +413,13 @@ class MainActivity : ComponentActivity() {
         val fileName = row.fileName ?: return
         lifecycleScope.launch {
             if (row.onWatch) runCatching { WatchRoutes.delete(applicationContext, fileName) }
-            if (row.onPhone) PhoneRouteStore.delete(applicationContext, fileName)
+            if (row.onPhone) {
+                PhoneRouteStore.delete(applicationContext, fileName)
+                PhoneRouteStore.deleteBaseMap(applicationContext, fileName)
+            }
+            getSharedPreferences("basemap", MODE_PRIVATE).edit().apply {
+                putStringSet("done", (getSharedPreferences("basemap", MODE_PRIVATE).getStringSet("done", emptySet())!! - fileName))
+            }.apply()
             delay(600); refreshRoutes()
         }
     }
@@ -841,10 +857,16 @@ private fun RouteDetailDialog(
                     }
                 } else emptyList()
             }
+            val baseMap by produceState<BaseMap?>(null, row.fileName, row.onPhone) {
+                value = if (row.onPhone && row.fileName != null) {
+                    withContext(Dispatchers.IO) { PhoneRouteStore.loadBaseMap(context, row.fileName) }
+                } else null
+            }
             Column {
                 if (points.size >= 2) {
                     RoutePreviewMap(
                         points = points,
+                        baseMap = baseMap,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(160.dp)
@@ -873,9 +895,28 @@ private fun RouteDetailDialog(
     )
 }
 
-/** Route preview in the watch's neon-on-black style: the GPX line fitted on black. */
+private fun baseMapColor(t: Int): Color = when (t) {
+    0 -> Color(0xFF666666); 1 -> Color(0xFF474747); 2 -> Color(0xFF3A3A3A); 3 -> Color(0xFF2C4A63)
+    else -> Color(0xFF3A3A3A)
+}
+private fun baseMapWidthDp(t: Int): Float = when (t) { 0 -> 1.3f; 1 -> 0.9f; 2 -> 0.7f; 3 -> 1.0f; else -> 0.9f }
+
+private fun offsetsPath(pts: List<Offset>): Path = Path().apply {
+    if (pts.isEmpty()) return@apply
+    moveTo(pts[0].x, pts[0].y)
+    for (i in 1..pts.lastIndex) lineTo(pts[i].x, pts[i].y)
+}
+
+/**
+ * Route preview in the watch's neon-on-black style: the surrounding [baseMap]
+ * (grey roads, blue water) under the GPX route line, all fitted to the route.
+ */
 @Composable
-private fun RoutePreviewMap(points: List<Pair<Double, Double>>, modifier: Modifier = Modifier) {
+private fun RoutePreviewMap(
+    points: List<Pair<Double, Double>>,
+    baseMap: BaseMap?,
+    modifier: Modifier = Modifier,
+) {
     Canvas(modifier.background(Color.Black)) {
         if (points.size < 2) return@Canvas
         val centerLatRad = Math.toRadians(points.map { it.first }.average())
@@ -891,13 +932,21 @@ private fun RoutePreviewMap(points: List<Pair<Double, Double>>, modifier: Modifi
         val scale = min(availW / spanX, availH / spanY)
         val offX = pad + (availW - spanX * scale) / 2f
         val offY = pad + (availH - spanY * scale) / 2f
-        val pts = points.indices.map { i ->
-            Offset(offX + (xs[i] - minX) * scale, offY + (maxY - ys[i]) * scale)
+        fun project(lat: Double, lon: Double): Offset =
+            Offset(offX + ((lon * lonScale).toFloat() - minX) * scale, offY + (maxY - lat.toFloat()) * scale)
+
+        // Basemap under the route (fitted to the route, so off-route bits clip to edges).
+        baseMap?.features?.forEach { f ->
+            val fpts = ArrayList<Offset>(f.c.size / 2)
+            var i = 0
+            while (i + 1 < f.c.size) { fpts.add(project(f.c[i], f.c[i + 1])); i += 2 }
+            if (fpts.size >= 2) {
+                drawPath(offsetsPath(fpts), baseMapColor(f.t), style = Stroke(baseMapWidthDp(f.t).dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+            }
         }
-        val path = Path().apply {
-            moveTo(pts[0].x, pts[0].y)
-            for (i in 1..pts.lastIndex) lineTo(pts[i].x, pts[i].y)
-        }
+
+        val pts = points.map { project(it.first, it.second) }
+        val path = offsetsPath(pts)
         drawPath(path, Neon.copy(alpha = 0.15f), style = Stroke(10.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
         drawPath(path, Neon, style = Stroke(2.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
         drawCircle(Neon, radius = 4.dp.toPx(), center = pts.first())                 // start

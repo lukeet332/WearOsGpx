@@ -1,7 +1,10 @@
 package com.wearosgpx.mobile.route
 
 import android.content.Context
+import kotlinx.serialization.json.Json
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.util.zip.GZIPInputStream
 
 /**
  * Phone-local copy of routes the user created/sent, so they can be shared or
@@ -37,5 +40,35 @@ object PhoneRouteStore {
     fun safeName(name: String): String {
         val cleaned = name.substringAfterLast('/').replace(Regex("[^A-Za-z0-9._-]"), "_")
         return if (cleaned.endsWith(".gpx", ignoreCase = true)) cleaned else "$cleaned.gpx"
+    }
+
+    // --- Local basemap (gzipped JSON) kept next to the GPX as <base>.map ---
+
+    private val json = Json { ignoreUnknownKeys = true }
+
+    private fun mapFile(context: Context, gpxFileName: String): File {
+        val safe = safeName(gpxFileName)
+        val base = if (safe.endsWith(".gpx", true)) safe.dropLast(4) else safe
+        return File(dir(context), "$base.map")
+    }
+
+    fun saveBaseMap(context: Context, gpxFileName: String, gzBytes: ByteArray) {
+        mapFile(context, gpxFileName).writeBytes(gzBytes)
+    }
+
+    fun deleteBaseMap(context: Context, gpxFileName: String) {
+        mapFile(context, gpxFileName).takeIf { it.exists() }?.delete()
+    }
+
+    /** Load + ungzip + decode the local basemap for a route, or null if none. */
+    fun loadBaseMap(context: Context, gpxFileName: String): BaseMap? {
+        val file = mapFile(context, gpxFileName)
+        if (!file.exists()) return null
+        return runCatching {
+            val data = GZIPInputStream(file.inputStream()).use { gz ->
+                ByteArrayOutputStream().also { gz.copyTo(it) }.toByteArray()
+            }
+            json.decodeFromString<BaseMap>(data.toString(Charsets.UTF_8))
+        }.getOrNull()
     }
 }
