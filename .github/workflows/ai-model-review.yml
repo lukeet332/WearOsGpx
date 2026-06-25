@@ -1,0 +1,64 @@
+name: AI model self-review
+
+# Once a month, ask the current model which model is best *today* for the fix bot
+# (any provider), validate it, and open a PR editing .github/ai_model.json.
+#  * Uses creds already in the repo (GitHub Models / Gemini) + passes validation
+#    -> labelled `automerge` (merges once CI passes).
+#  * Needs a NEW API key -> labelled `ai-model-review`, assigned to + @mentioning the
+#    owner, NOT auto-merged — you add the secret AI_PROVIDER_KEY and merge after review.
+on:
+  schedule:
+    - cron: '0 7 1 * *'        # 07:00 UTC on the 1st of each month
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  models: read                  # GitHub Models inference via GITHUB_TOKEN
+
+concurrency:
+  group: ai-model-review
+  cancel-in-progress: false
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with: { python-version: '3.12' }
+
+      - name: Assess best model & update config if better
+        id: review
+        env:
+          GH_MODELS_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # GitHub Models (current default)
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}  # already-configured alternative
+          GEMINI_MODEL: gemini-2.5-flash
+          AI_PROVIDER_KEY: ${{ secrets.AI_PROVIDER_KEY }} # generic slot for any new provider
+        run: python .github/scripts/ai_model_review.py
+
+      # Only opens a PR if the assessment changed the config.
+      - name: Open model-switch PR
+        if: steps.review.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.BOT_PAT }}
+          branch: ai/model-review
+          delete-branch: true
+          add-paths: .github/ai_model.json
+          commit-message: "ci: switch AI fix model to ${{ steps.review.outputs.new_model }}"
+          title: "🤖 ${{ steps.review.outputs.needs_new_key == 'true' && '[needs API key] ' || '' }}Switch fix model → ${{ steps.review.outputs.new_model }}"
+          labels: ${{ steps.review.outputs.needs_new_key == 'true' && 'ai-model-review' || 'automerge' }}
+          assignees: ${{ steps.review.outputs.needs_new_key == 'true' && 'lukeet332' || '' }}
+          body: |
+            Monthly automated model self-assessment.
+
+            **Proposed switch:** `${{ steps.review.outputs.new_model }}` — provider **${{ steps.review.outputs.new_provider }}** (key env `${{ steps.review.outputs.api_key_env }}`).
+
+            **Reasoning:** ${{ steps.review.outputs.reason }}
+
+            ${{ steps.review.outputs.needs_new_key == 'true' && '⚠️ **@lukeet332 — action required.** This model needs a new API key, so it is NOT auto-merging. Add a repository secret named `AI_PROVIDER_KEY` with this provider''s key (Settings → Secrets and variables → Actions), then merge this PR. Review the reasoning above first.' || '✅ Runs on credentials already in the repo and passed a live validation call — auto-merging once CI is green.' }}
+
+            CI (`assembleDebug` + unit tests) gates this like any other PR; the fix bot falls back to Gemini if the new model ever errors.

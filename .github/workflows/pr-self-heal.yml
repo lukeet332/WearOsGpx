@@ -98,25 +98,27 @@ jobs:
           tail -c 61440 build-log.txt > build-log.trunc.txt || true
 
       - name: Ask the model to fix the failure
+        id: fix
         if: startsWith(env.BRANCH, 'gemini/') && steps.guard.outputs.stop == 'false'
         env:
-          GH_MODELS_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # GitHub Models auth (models:read)
-          GH_MODEL: openai/gpt-4.1                        # primary "heavy thinking" model
+          GH_MODELS_TOKEN: ${{ secrets.GITHUB_TOKEN }}    # GitHub Models auth (models:read)
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}   # automatic fallback
           GEMINI_MODEL: gemini-2.5-flash
-        run: python .github/scripts/ai_fix.py
+          AI_PROVIDER_KEY: ${{ secrets.AI_PROVIDER_KEY }} # generic slot for any other provider
+        run: python .github/scripts/ai_fix.py             # active model from .github/ai_model.json
 
       - name: Push the fix (re-runs CI) or report no fix
         if: startsWith(env.BRANCH, 'gemini/') && steps.guard.outputs.stop == 'false'
         env:
           GH_TOKEN: ${{ secrets.BOT_PAT }}
+          BOT: ${{ steps.fix.outputs.bot_label || 'ai-bot' }}
         run: |
           if git diff --quiet; then
             gh pr comment "${{ steps.pr.outputs.number }}" --repo "$REPO" --body \
-              "🤖 Gemini had no safe fix for this CI failure."
+              "🤖 $BOT had no safe fix for this CI failure."
             exit 0
           fi
-          git config user.name "gemini-bot"
-          git config user.email "gemini-bot@users.noreply.github.com"
-          git commit -am "fix: address CI failure [gemini-pr-fix]"
+          git config user.name "$BOT"
+          git config user.email "ai-fix-bot@users.noreply.github.com"
+          git commit -am "fix: address CI failure ($BOT) [gemini-pr-fix]"
           git push origin "HEAD:$BRANCH"
