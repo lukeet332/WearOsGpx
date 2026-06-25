@@ -1,11 +1,11 @@
 name: AI model self-review
 
-# Once a month, ask the current model which model is best *today* for the fix bot
-# (any provider), validate it, and open a PR editing .github/ai_model.json.
-#  * Uses creds already in the repo (GitHub Models / Gemini) + passes validation
-#    -> labelled `automerge` (merges once CI passes).
-#  * Needs a NEW API key -> labelled `ai-model-review`, assigned to + @mentioning the
-#    owner, NOT auto-merged — you add the secret AI_PROVIDER_KEY and merge after review.
+# Once a month, ask the current model which model is best *today* for the fix bot,
+# chosen ONLY from providers whose API key is configured here. If it recommends a
+# change, validate it with a live call and open a PR editing .github/ai_model.json.
+# Because the choice is limited to already-keyed providers, the switch auto-merges
+# once CI passes. To widen the menu, add a provider key as a repo secret below + a
+# row in ai_fix.PROVIDERS.
 on:
   schedule:
     - cron: '0 7 1 * *'        # 07:00 UTC on the 1st of each month
@@ -33,13 +33,19 @@ jobs:
       - name: Assess best model & update config if better
         id: review
         env:
-          GH_MODELS_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # GitHub Models (current default)
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}  # already-configured alternative
+          GH_MODELS_TOKEN: ${{ secrets.GITHUB_TOKEN }}       # GitHub Models (default, free)
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}      # already configured
           GEMINI_MODEL: gemini-2.5-flash
-          AI_PROVIDER_KEY: ${{ secrets.AI_PROVIDER_KEY }} # generic slot for any new provider
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: python .github/scripts/ai_model_review.py
 
-      # Only opens a PR if the assessment changed the config.
+      # Only opens a PR if the assessment changed the config. Auto-merges: the chosen
+      # model is a configured provider that passed a live validation call, and CI still
+      # gates it. Fix PRs going forward are labelled with the new model so the switch
+      # is visible in the PR list.
       - name: Open model-switch PR
         if: steps.review.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v8
@@ -49,16 +55,17 @@ jobs:
           delete-branch: true
           add-paths: .github/ai_model.json
           commit-message: "ci: switch AI fix model to ${{ steps.review.outputs.new_model }}"
-          title: "🤖 ${{ steps.review.outputs.needs_new_key == 'true' && '[needs API key] ' || '' }}Switch fix model → ${{ steps.review.outputs.new_model }}"
-          labels: ${{ steps.review.outputs.needs_new_key == 'true' && 'ai-model-review' || 'automerge' }}
-          assignees: ${{ steps.review.outputs.needs_new_key == 'true' && 'lukeet332' || '' }}
+          title: "🤖 Switch fix model → ${{ steps.review.outputs.new_provider }}/${{ steps.review.outputs.new_model }}"
+          labels: automerge
           body: |
             Monthly automated model self-assessment.
 
-            **Proposed switch:** `${{ steps.review.outputs.new_model }}` — provider **${{ steps.review.outputs.new_provider }}** (key env `${{ steps.review.outputs.api_key_env }}`).
+            **Proposed switch:** provider **${{ steps.review.outputs.new_provider }}**, model `${{ steps.review.outputs.new_model }}`.
 
             **Reasoning:** ${{ steps.review.outputs.reason }}
 
-            ${{ steps.review.outputs.needs_new_key == 'true' && '⚠️ **@lukeet332 — action required.** This model needs a new API key, so it is NOT auto-merging. Add a repository secret named `AI_PROVIDER_KEY` with this provider''s key (Settings → Secrets and variables → Actions), then merge this PR. Review the reasoning above first.' || '✅ Runs on credentials already in the repo and passed a live validation call — auto-merging once CI is green.' }}
-
-            CI (`assembleDebug` + unit tests) gates this like any other PR; the fix bot falls back to Gemini if the new model ever errors.
+            The model was chosen from providers whose key is already configured and passed a
+            live validation call, so this auto-merges once CI (`assembleDebug` + unit tests)
+            is green. Future fix PRs will be labelled with the new model. The bot falls back
+            to Gemini if the model ever errors at runtime; revert by editing
+            `.github/ai_model.json`.
