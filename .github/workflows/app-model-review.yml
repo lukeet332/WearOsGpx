@@ -46,14 +46,15 @@ jobs:
           delete-branch: true
           add-paths: mobile/src/main/res/raw/recommended_models.json
           commit-message: "chore: refresh AI route model list (${{ steps.review.outputs.providers }})"
-          title: "🤖 Refresh AI route model config → ${{ steps.review.outputs.provider }}"
+          title: "🤖 Refresh AI route model menu (default: ${{ steps.review.outputs.default }})"
           labels: automerge
           body: |
-            Weekly re-pick of the best **free** provider + models for the AI running-route
-            chatbot. The chosen model(s) were **validated with a live call** against the
-            real provider before being written. It strongly prefers the current provider;
-            if it did switch (`switched=${{ steps.review.outputs.switched }}`), the app will
-            prompt users for a key for the new provider rather than break. Ships in the next
-            release; the in-app dropdown + "Auto" default pick this up.
+            Weekly re-pick of a **diverse, best-first menu of free models** for the AI
+            running-route chatbot, spanning providers. Every model was **validated with a
+            live call** against its real provider before being written. The default (first)
+            prefers the current provider so most users' keys keep working; if the default
+            provider switched (`switched=${{ steps.review.outputs.switched }}`), the app
+            prompts those users for a key for the new provider rather than break. Ships in
+            the next release; the in-app dropdown + "Auto" default pick this up.
 
             Review the diff before trusting it.

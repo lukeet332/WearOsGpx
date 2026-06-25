@@ -89,8 +89,8 @@ private fun SettingsScreen(prompt: Boolean, onBack: () -> Unit) {
 
         fun saveAll() {
             AppSettings.setOrsKey(context, ors)
+            AppSettings.setAiModel(context, modelChoice)   // before the key, so the key records the right provider
             AppSettings.setAiKey(context, aiKey)
-            AppSettings.setAiModel(context, modelChoice)
             Toast.makeText(context, "Settings saved", Toast.LENGTH_SHORT).show()
         }
 
@@ -127,51 +127,49 @@ private fun SettingsScreen(prompt: Boolean, onBack: () -> Unit) {
                 }
             }
 
-            // ---- AI route generation (single provider, kept fresh weekly) ----
+            // ---- AI route generation (diverse free model menu, kept fresh weekly) ----
             Spacer(Modifier.height(20.dp))
-            val aiConfig = remember { RecommendedModels.config(context) }
+            val entries = remember { RecommendedModels.entries(context) }
+            val active = entries.firstOrNull { it.model == modelChoice } ?: entries.firstOrNull() ?: RecommendedModels.FALLBACK
             KeyCard(
                 title = "AI route generation",
-                status = if (aiKey.isBlank()) "Not set — paste your ${aiConfig.provider} key"
-                else "✓ ${aiConfig.provider} key set",
+                status = if (aiKey.isBlank()) "Not set — paste your ${active.provider} key"
+                else "✓ ${active.provider} key set",
                 statusOk = aiKey.isNotBlank(),
                 blurb = "Describe a route in plain text (\"5k loop from here\") and the AI plots it on " +
-                    "real roads. Uses ${aiConfig.provider} — free, fast, with limits you're unlikely to " +
-                    "hit. Grab a free key and paste it below; the model is kept up to date for you.",
-                links = listOf("Get a free ${aiConfig.provider} key →" to aiConfig.keyUrl),
+                    "real roads. The recommended model is free; pick another below if you like — some use " +
+                    "a different provider, so you'd paste that provider's key. Grab a free key and paste it.",
+                links = listOf("Get a free ${active.provider} key →" to active.keyUrl),
                 onOpen = ::open,
             ) {
-                OutlinedTextField(
-                    value = aiKey, onValueChange = { aiKey = it }, singleLine = true,
-                    label = { Text("Paste your ${aiConfig.provider} API key") }, modifier = Modifier.fillMaxWidth(),
-                )
-                if (aiKey.isNotBlank()) {
-                    Spacer(Modifier.height(10.dp))
-                    Text("Model", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
-                    val options = aiConfig.models
-                    val recLabel = options.firstOrNull()?.label ?: "recommended"
-                    var expanded by remember { mutableStateOf(false) }
-                    val current =
-                        if (modelChoice.isBlank()) "Auto · $recLabel"
-                        else options.find { it.model == modelChoice }?.label ?: modelChoice
-                    Box {
-                        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-                            Text(current, color = Neon)
-                        }
-                        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                Text("Model", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
+                var expanded by remember { mutableStateOf(false) }
+                val recLabel = entries.firstOrNull()?.label ?: "recommended"
+                val current =
+                    if (modelChoice.isBlank()) "Auto · $recLabel"
+                    else entries.find { it.model == modelChoice }?.label ?: modelChoice
+                Box {
+                    OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text(current, color = Neon)
+                    }
+                    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Auto · keep the recommended model") },
+                            onClick = { modelChoice = ""; expanded = false },
+                        )
+                        entries.forEach { e ->
                             DropdownMenuItem(
-                                text = { Text("Auto · keep the recommended model") },
-                                onClick = { modelChoice = ""; expanded = false },
+                                text = { Text(e.label) },
+                                onClick = { modelChoice = e.model; expanded = false },
                             )
-                            options.forEach { opt ->
-                                DropdownMenuItem(
-                                    text = { Text(opt.label) },
-                                    onClick = { modelChoice = opt.model; expanded = false },
-                                )
-                            }
                         }
                     }
                 }
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = aiKey, onValueChange = { aiKey = it }, singleLine = true,
+                    label = { Text("Paste your ${active.provider} API key") }, modifier = Modifier.fillMaxWidth(),
+                )
             }
 
             // ---- OpenRouteService (routing) ----
