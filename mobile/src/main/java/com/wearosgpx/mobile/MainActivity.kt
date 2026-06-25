@@ -79,7 +79,6 @@ import com.wearosgpx.mobile.route.GeocodingService
 import com.wearosgpx.mobile.route.GpxMeta
 import com.wearosgpx.mobile.route.AiRouteActivity
 import com.wearosgpx.mobile.route.PhoneRouteStore
-import com.wearosgpx.mobile.route.RecommendedModels
 import com.wearosgpx.mobile.route.RouteCreatorActivity
 import com.wearosgpx.mobile.route.RouteDiscoveryService
 import com.wearosgpx.mobile.settings.AppSettings
@@ -261,7 +260,7 @@ class MainActivity : ComponentActivity() {
         if (permissionFlowThisLaunch) return
         if (!AppSettings.requiredKeysMissing(this)) return
         // Prompt once per provider, so we re-prompt if the weekly review switched providers.
-        val provider = RecommendedModels.config(this).provider
+        val provider = AppSettings.activeProvider(this)
         val prefs = getSharedPreferences("perms", MODE_PRIVATE)
         if (prefs.getString("prompted_keys_provider", "") == provider) return
         prefs.edit().putString("prompted_keys_provider", provider).apply()
@@ -350,7 +349,7 @@ class MainActivity : ComponentActivity() {
         if (!AppSettings.requiredKeysMissing(this)) {
             startActivity(Intent(this, AiRouteActivity::class.java))
         } else {
-            val provider = RecommendedModels.config(this).provider
+            val provider = AppSettings.activeProvider(this)
             Toast.makeText(this, "Add your $provider API key in Settings to use AI routes.", Toast.LENGTH_LONG).show()
             startActivity(Intent(this, SettingsActivity::class.java).putExtra(SettingsActivity.EXTRA_PROMPT, true))
         }

@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
-Weekly: pick the best FREE provider + models for the phone app's AI running-route chatbot
-(a strict-JSON tool-calling agent) and refresh mobile/src/main/res/raw/recommended_models.json.
+Weekly: refresh the diverse FREE model menu for the phone app's AI running-route chatbot
+(a strict-JSON tool-calling agent) in mobile/src/main/res/raw/recommended_models.json.
 
-The plumbing is OpenAI-compatible, so we're free to switch provider when a clearly better
-free option appears — but we PREFER the current provider (so users rarely need a new key),
-and every candidate model is VALIDATED with a live call against the real provider before
-it's written. If the provider changes, the app prompts the user for a key for the new one.
+Each entry is self-describing (provider + OpenAI-compatible base_url + key page + model), so
+the menu can span providers. The CURRENT model proposes a best-first, DIVERSE shortlist; each
+candidate is VALIDATED with a live call against its real provider before it's written. The
+FIRST entry is the recommended default — we prefer keeping it on the current default provider
+so most users never need a new key; other entries can come from any provider (the app prompts
+for that provider's key if the user picks one).
 
-Standard library only; any error / no change -> changed=false (keep current config).
+Standard library only; any error / no change -> changed=false (keep current).
 """
 import json
 import os
@@ -20,10 +22,10 @@ CONFIG = Path("mobile/src/main/res/raw/recommended_models.json")
 GH_TOKEN = os.environ.get("GH_MODELS_TOKEN", "").strip()
 GH_MODEL = os.environ.get("GH_MODEL", "openai/gpt-4.1")
 GH_BASE = "https://models.github.ai/inference"
-MAX_MODELS = 3
+MAX_ENTRIES = 4
 
-# Candidate providers (all OpenAI-compatible, with a free tier). name/base/key page +
-# which repo secret validates them. The model chooses among the ones we hold a key for.
+# Candidate providers (OpenAI-compatible, free tier). The model picks among the ones we
+# hold a key for; each entry we write is self-describing.
 PROVIDERS = {
     "gemini": {"name": "Google Gemini", "base": "https://generativelanguage.googleapis.com/v1beta/openai",
                "key_url": "https://aistudio.google.com/app/apikey", "key_env": "GEMINI_API_KEY"},
@@ -71,76 +73,75 @@ def validate(base, key, model):
         return False
 
 
-PROMPT = """Pick the AI model provider for an automated RUNNING-ROUTE chatbot. It chats with the
+PROMPT = """Curate the model menu for an automated RUNNING-ROUTE chatbot. It chats with the
 user, asks clarifying questions, and drives a STRICT JSON tool-calling loop (geocode, routing,
-elevation) — so it must be excellent at precise instruction / JSON following, and fast.
+elevation) — so models must be excellent at precise instruction / JSON following, and fast.
 
-Choose ONE provider and its best models from ONLY these (all FREE-tier, we hold a key for each):
-%(providers)s
+Return a DIVERSE, best-first shortlist of up to %(n)d FREE models drawn from these providers
+(we hold a key for each): %(providers)s
+- The FIRST entry is the recommended default — PREFER keeping it on "%(cur_default)s" so users'
+  keys keep working; only change the default if another is clearly better.
+- The remaining entries should span DIFFERENT providers / strengths (genuine variety, not
+  variants of one model).
 
-Current config: provider=%(cur_provider)s, models=%(cur_models)s
-STRONGLY PREFER keeping the current provider — only switch if another is CLEARLY better for this
-use case, because switching makes users get a new key. List up to %(n)d models, best-first
-(the first becomes the recommended default).
+Current menu: %(current)s
 
 Respond with STRICT JSON only:
-{"provider": "<one of: %(keys)s>", "models": [{"model": "<exact id>", "label": "<short label>"}]}
+{"models": [{"provider": "<one of: %(keys)s>", "model": "<exact id>", "label": "<short label incl. provider>"}]}
 """.strip()
 
 
 def main():
     if not GH_TOKEN:
         stop("No GitHub Models token — skipping.")
-    current = json.loads(CONFIG.read_text()) if CONFIG.exists() else {}
+    current = json.loads(CONFIG.read_text()) if CONFIG.exists() else {"models": []}
+    cur_models = current.get("models", [])
     avail = {k: v for k, v in PROVIDERS.items() if os.environ.get(v["key_env"], "").strip()}
     if not avail:
         stop("No provider keys configured — skipping.")
 
+    cur_default = (cur_models[0].get("provider") if cur_models else None) or "Google Gemini"
     listing = "\n".join(f"- {k} ({v['name']})" for k, v in avail.items())
     prompt = PROMPT % {
-        "providers": listing, "keys": ", ".join(avail), "n": MAX_MODELS,
-        "cur_provider": current.get("provider", "(none)"),
-        "cur_models": json.dumps([m.get("model") for m in current.get("models", [])]),
+        "n": MAX_ENTRIES, "providers": listing, "keys": ", ".join(avail), "cur_default": cur_default,
+        "current": json.dumps([{"provider": m.get("provider"), "model": m.get("model")} for m in cur_models]),
     }
     try:
         rec = json.loads(chat(GH_BASE, GH_TOKEN, GH_MODEL, prompt, json_mode=True))
     except Exception as e:
         stop(f"Recommendation call failed ({e.__class__.__name__}) — keeping current.")
 
-    pkey = str(rec.get("provider", "")).strip()
-    if pkey not in avail:
-        stop(f"Recommended provider '{pkey}' not available — keeping current.")
-    spec = avail[pkey]
-    key = os.environ[spec["key_env"]].strip()
-
-    validated = []
-    for it in (rec.get("models") or [])[:MAX_MODELS]:
+    entries = []
+    seen = set()
+    for it in (rec.get("models") or [])[:MAX_ENTRIES + 2]:
         if not isinstance(it, dict):
             continue
+        pkey = str(it.get("provider", "")).strip()
         model = str(it.get("model", "")).strip()
         label = str(it.get("label", "")).strip() or model
-        if model and validate(spec["base"], key, model):
-            validated.append({"model": model, "label": label})
+        if pkey not in avail or not model or model in seen:
+            continue
+        spec = avail[pkey]
+        if validate(spec["base"], os.environ[spec["key_env"]].strip(), model):
+            entries.append({"provider": spec["name"], "base_url": spec["base"], "key_url": spec["key_url"],
+                            "model": model, "label": label})
+            seen.add(model)
             print(f"  validated {pkey}/{model}")
-        elif model:
+            if len(entries) >= MAX_ENTRIES:
+                break
+        else:
             print(f"  dropped (failed validation) {pkey}/{model}")
-    if not validated:
-        stop("No recommended model validated — keeping current.")
 
-    new = {
-        "_comment": current.get("_comment", "AI route-generation provider config; refreshed weekly by app-model-review."),
-        "provider": spec["name"],
-        "base_url": spec["base"],
-        "key_url": spec["key_url"],
-        "models": validated,
-    }
-    if new.get("provider") == current.get("provider") and new.get("models") == current.get("models"):
-        stop("Provider + models unchanged — no update.")
+    if not entries:
+        stop("No recommended models validated — keeping current.")
+    new = {"models": entries}
+    if new == current:
+        stop("Model menu unchanged — no update.")
 
     CONFIG.write_text(json.dumps(new, indent=2) + "\n")
-    switched = new["provider"] != current.get("provider")
-    emit(changed="true", provider=spec["name"], switched=str(switched).lower())
-    print(f"Updated -> {spec['name']} ({'provider switched' if switched else 'models refreshed'})")
+    switched = (cur_models[0].get("provider") if cur_models else None) != entries[0]["provider"]
+    emit(changed="true", default=entries[0]["provider"], switched=str(switched).lower())
+    print(f"Updated menu; default = {entries[0]['provider']} ({entries[0]['model']})")
 
 
 if __name__ == "__main__":

@@ -9,67 +9,70 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
- * The AI route generator's provider config: which OpenAI-compatible endpoint to use, where
- * to get a key, and the curated model menu (first = recommended default). Loaded from the
- * bundled `res/raw/recommended_models.json` (kept fresh by the weekly app-model-review CI
- * job), with a built-in fallback so it always works. Parsing is pure + unit-tested.
+ * The AI route generator's model menu. Each entry is SELF-DESCRIBING — it carries its own
+ * provider, OpenAI-compatible base URL, and where to get a key — so the list can scale to a
+ * mix of providers/models without a separate top-level provider block. The first entry is
+ * the recommended default; the selected entry decides which endpoint + key the app uses.
  *
- * We stick to ONE provider so the user's single key never breaks; the weekly refresh only
- * changes the models, never the base_url. The plumbing stays OpenAI-compatible, so changing
- * provider in future is a config edit, not a code change.
+ * Loaded from the bundled `res/raw/recommended_models.json` (kept fresh by the weekly
+ * app-model-review CI job), with a built-in fallback so it always works. The plumbing stays
+ * OpenAI-compatible, so switching provider is just data here, not a code change. Parsing is
+ * pure + unit-tested. (Note: that JSON is a bundled data file — never shown to the user.)
  */
 object RecommendedModels {
 
-    data class Option(val model: String, val label: String)
-    data class Config(
+    data class Entry(
         val provider: String,
         val baseUrl: String,
         val keyUrl: String,
-        val models: List<Option>,
+        val model: String,
+        val label: String,
     )
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    val FALLBACK = Config(
+    val FALLBACK = Entry(
         provider = "Google Gemini",
         baseUrl = "https://generativelanguage.googleapis.com/v1beta/openai",
         keyUrl = "https://aistudio.google.com/app/apikey",
-        models = listOf(Option("gemini-2.5-flash", "Gemini 2.5 Flash · recommended")),
+        model = "gemini-2.5-flash",
+        label = "Gemini 2.5 Flash · recommended",
     )
 
     @Volatile
-    private var cache: Config? = null
+    private var cache: List<Entry>? = null
 
-    fun config(context: Context): Config {
+    fun entries(context: Context): List<Entry> {
         cache?.let { return it }
         val loaded = runCatching {
             val text = context.resources.openRawResource(R.raw.recommended_models)
                 .bufferedReader().use { it.readText() }
             parse(text)
-        }.getOrNull() ?: FALLBACK
+        }.getOrNull().orEmpty().ifEmpty { listOf(FALLBACK) }
         cache = loaded
         return loaded
     }
 
-    /** The recommended (first) model id, or the fallback default. */
-    fun recommended(context: Context): String =
-        config(context).models.firstOrNull()?.model ?: FALLBACK.models.first().model
+    /** The entry for [selectedModel] (the user's pick), else the first (recommended), else fallback. */
+    fun activeEntry(context: Context, selectedModel: String): Entry {
+        val es = entries(context)
+        return es.firstOrNull { it.model == selectedModel } ?: es.firstOrNull() ?: FALLBACK
+    }
 
-    // ---- pure parsing (unit-tested); returns null if invalid/empty ----
-    fun parse(jsonStr: String): Config? = runCatching {
-        val o = json.parseToJsonElement(jsonStr).jsonObject
-        val base = o["base_url"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return null
-        val models = (o["models"] as? JsonArray)?.mapNotNull { el ->
-            val m = el.jsonObject
-            val model = m["model"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-            Option(model, m["label"]?.jsonPrimitive?.contentOrNull ?: model)
-        }.orEmpty()
-        if (models.isEmpty()) return null
-        Config(
-            provider = o["provider"]?.jsonPrimitive?.contentOrNull ?: "AI provider",
-            baseUrl = base,
-            keyUrl = o["key_url"]?.jsonPrimitive?.contentOrNull ?: FALLBACK.keyUrl,
-            models = models,
-        )
-    }.getOrNull()
+    // ---- pure parsing (unit-tested); skips entries missing base_url/model ----
+    fun parse(jsonStr: String): List<Entry> = runCatching {
+        val arr = json.parseToJsonElement(jsonStr).jsonObject["models"] as? JsonArray ?: return emptyList()
+        arr.mapNotNull { el ->
+            val o = el.jsonObject
+            val base = o["base_url"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val model = o["model"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            Entry(
+                provider = o["provider"]?.jsonPrimitive?.contentOrNull ?: "AI provider",
+                baseUrl = base,
+                keyUrl = o["key_url"]?.jsonPrimitive?.contentOrNull ?: FALLBACK.keyUrl,
+                model = model,
+                label = o["label"]?.jsonPrimitive?.contentOrNull ?: model,
+            )
+        }
+    }.getOrDefault(emptyList())
 }
