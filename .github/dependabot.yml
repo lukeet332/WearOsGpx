@@ -27,7 +27,7 @@ updates:
       - dependency-name: "androidx.health.connect:*"
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
       - dependency-name: "androidx.compose:compose-bom"
-        update-types: ["version-update:semver-major"]
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
     groups:
       androidx:
         patterns: ["androidx.*"]
