@@ -1,6 +1,7 @@
 package com.wearosgpx.mobile.route
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.os.Bundle
@@ -54,6 +55,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import com.wearosgpx.mobile.settings.AppSettings
 import com.wearosgpx.mobile.sync.WatchRoutes
 import kotlinx.coroutines.Dispatchers
@@ -90,6 +92,33 @@ class AiRouteActivity : ComponentActivity() {
                 runCatching { WatchRoutes.delete(applicationContext, fileName) }
             }
             exists
+        }
+
+        override suspend fun rename(fileName: String, newName: String): Boolean = withContext(Dispatchers.IO) {
+            val file = PhoneRouteStore.fileFor(this@AiRouteActivity, fileName) ?: return@withContext false
+            // Rewrite only the GPX <name> (keeps geometry + elevation), save, push to watch.
+            val bytes = GpxBuilder.renamed(file.readText(), newName).toByteArray()
+            PhoneRouteStore.save(this@AiRouteActivity, fileName, bytes)
+            runCatching { WatchRoutes.sendRoute(applicationContext, fileName, bytes) }
+            true
+        }
+
+        override suspend fun share(fileName: String): Boolean {
+            val file = PhoneRouteStore.fileFor(this@AiRouteActivity, fileName) ?: return false
+            withContext(Dispatchers.Main) {
+                val uri = FileProvider.getUriForFile(this@AiRouteActivity, "$packageName.fileprovider", file)
+                startActivity(
+                    Intent.createChooser(
+                        Intent(Intent.ACTION_SEND).apply {
+                            type = "application/gpx+xml"
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        },
+                        "Share route",
+                    ),
+                )
+            }
+            return true
         }
     }
 

@@ -23,6 +23,8 @@ interface RouteOps {
     data class Info(val fileName: String, val name: String, val distanceMeters: Double)
     suspend fun list(): List<Info>
     suspend fun delete(fileName: String): Boolean   // -> recycle bin + remove from watch
+    suspend fun rename(fileName: String, newName: String): Boolean
+    suspend fun share(fileName: String): Boolean     // -> opens the system share sheet
 }
 
 /**
@@ -60,6 +62,9 @@ class AiRouteAgent(
     private val json = Json { ignoreUnknownKeys = true }
     private val messages = mutableListOf(Msg("system", SYSTEM_PROMPT))
     private var lastRoute: RoutedGeometry? = null
+
+    /** Routes surfaced by the last search_routes call, so load_route can resolve an id. */
+    private val discovered = mutableMapOf<Long, RouteDiscoveryService.DiscoveredRoute>()
 
     /** Send the user's message and run the agent until it replies or has a route ready. */
     suspend fun send(userText: String): Turn {
@@ -109,7 +114,8 @@ class AiRouteAgent(
             if (lat.isNaN() || lon.isNaN() || dist.isNaN()) """{"error":"need lat, lon and distance_m"}"""
             else {
                 val seed = AiRouteLogic.argDouble(a, "seed").let { if (it.isNaN()) 1 else it.toInt() }
-                val pts = targetedRoundTrip(lat to lon, dist, seed)   // auto-fits toward the target
+                val avoid = AiRouteLogic.argStringList(a, "avoid")
+                val pts = targetedRoundTrip(lat to lon, dist, seed, avoid)   // auto-fits toward the target
                 if (pts.isNullOrEmpty()) """{"error":"routing failed — try a different start or distance"}"""
                 else finalizeGeometry(pts)
             }
@@ -133,10 +139,60 @@ class AiRouteAgent(
             val wps = parseWaypoints(a)
             if (wps == null || wps.size < 2) """{"error":"need waypoints [[lat,lon],...] with at least 2 points"}"""
             else {
-                val pts = RoutingService.route(wps, orsKey)
+                val prefer = AiRouteLogic.argString(a, "prefer")
+                val avoid = AiRouteLogic.argStringList(a, "avoid").ifEmpty { listOf("steps", "fords") }
+                val pts = RoutingService.route(wps, orsKey, prefer, avoid)
                 if (pts.isNullOrEmpty()) """{"error":"routing failed"}"""
                 else finalizeGeometry(pts)
             }
+        }
+
+        "search_routes" -> {
+            val q = AiRouteLogic.argString(a, "query")
+            val found = if (!q.isNullOrBlank()) RouteDiscoveryService.searchByName(q)
+            else currentLocation?.let { RouteDiscoveryService.searchNearby(it.first, it.second) } ?: emptyList()
+            discovered.clear()
+            found.forEach { discovered[it.id] = it }
+            if (found.isEmpty()) """{"routes":[],"note":"nothing on OpenStreetMap for that — for a one-off/annual race, ask the user for the official GPX link and use import_gpx_url"}"""
+            else """{"routes":[""" + found.take(20).joinToString(",") {
+                """{"id":${it.id},"name":${JsonPrimitive(it.name)},"activity":${JsonPrimitive(it.activity)}}"""
+            } + "]}"
+        }
+
+        "load_route" -> {
+            val id = AiRouteLogic.argDouble(a, "id").let { if (it.isNaN()) null else it.toLong() }
+            val route = id?.let { discovered[it] }
+            if (route == null) """{"error":"unknown id — call search_routes first and use an id it returned"}"""
+            else {
+                val pts = RouteDiscoveryService.buildPoints(route)
+                if (pts.isNullOrEmpty()) """{"error":"couldn't assemble that route's geometry"}"""
+                else finalizeGeometry(pts, withElevation = false)
+            }
+        }
+
+        "import_gpx_url" -> {
+            val url = AiRouteLogic.argString(a, "url")
+            if (url.isNullOrBlank()) """{"error":"missing url (must be a direct http(s) link to a .gpx)"}"""
+            else {
+                val pts = RouteDiscoveryService.importGpxUrl(url)
+                if (pts.isNullOrEmpty()) """{"error":"couldn't read a track from that URL — make sure it's a direct link to a GPX file"}"""
+                else finalizeGeometry(pts, withElevation = false)
+            }
+        }
+
+        "rename_route" -> {
+            val file = AiRouteLogic.argString(a, "file")
+            val newName = AiRouteLogic.argString(a, "name")
+            if (file.isNullOrBlank() || newName.isNullOrBlank()) """{"error":"need file (from list_routes) and name"}"""
+            else if (routeOps.rename(file, newName)) """{"ok":true,"renamed":${JsonPrimitive(file)}}"""
+            else """{"error":"no route with file '$file'"}"""
+        }
+
+        "share_route" -> {
+            val file = AiRouteLogic.argString(a, "file")
+            if (file.isNullOrBlank()) """{"error":"missing file — call list_routes first"}"""
+            else if (routeOps.share(file)) """{"ok":true,"note":"opened the share sheet"}"""
+            else """{"error":"no local copy of '$file' to share"}"""
         }
 
         else -> """{"error":"unknown tool '${a.tool}'"}"""
@@ -148,12 +204,12 @@ class AiRouteAgent(
      * gets "5k" near 5k instead of, say, 6.8k; the actual distance is still fed back so the
      * agent can iterate further (e.g. a different seed) if needed.
      */
-    private suspend fun targetedRoundTrip(start: Pair<Double, Double>, targetM: Double, seed: Int): List<Pair<Double, Double>>? {
+    private suspend fun targetedRoundTrip(start: Pair<Double, Double>, targetM: Double, seed: Int, avoid: List<String> = emptyList()): List<Pair<Double, Double>>? {
         var length = targetM
         var best: List<Pair<Double, Double>>? = null
         var bestErr = Double.MAX_VALUE
         repeat(3) {
-            val pts = RoutingService.roundTrip(start, length, orsKey, seed) ?: return best
+            val pts = RoutingService.roundTrip(start, length, orsKey, seed, avoid) ?: return best
             val actual = AiRouteLogic.pathDistanceMeters(pts)
             val err = if (targetM > 0) abs(actual - targetM) / targetM else 0.0
             if (err < bestErr) { bestErr = err; best = pts }
@@ -163,9 +219,15 @@ class AiRouteAgent(
         return best
     }
 
-    /** Enrich routed points with elevation + computed distance/ascent; stash for "final". */
-    private suspend fun finalizeGeometry(pts: List<Pair<Double, Double>>): String {
-        val elevations = runCatching { ElevationService.lookup(pts) }.getOrDefault(List(pts.size) { null })
+    /**
+     * Enrich routed points with elevation + computed distance/ascent; stash for "final".
+     * [withElevation] is skipped for discovered/imported routes — they can be thousands of
+     * points, and hitting the elevation API per point would be slow and hammer the service.
+     */
+    private suspend fun finalizeGeometry(pts: List<Pair<Double, Double>>, withElevation: Boolean = true): String {
+        val elevations =
+            if (withElevation) runCatching { ElevationService.lookup(pts) }.getOrDefault(List(pts.size) { null })
+            else List(pts.size) { null }
         val distance = AiRouteLogic.pathDistanceMeters(pts)
         val ascent = AiRouteLogic.ascentMeters(elevations)
         lastRoute = RoutedGeometry(pts, elevations, distance, ascent)
@@ -224,25 +286,41 @@ Reply with EXACTLY ONE JSON object per turn, nothing else:
 Tools:
   current_location  args: {}                                    -> {"lat":..,"lon":..} or error
   geocode           args: {"query":"<place>"}                   -> {"lat":..,"lon":..,"label":..}
-  round_trip        args: {"lat":..,"lon":..,"distance_m":<int>,"seed":<int optional>}
+  round_trip        args: {"lat":..,"lon":..,"distance_m":<int>,"seed":<int optional>,"avoid":[..] optional}
                     -> a loop AUTO-FITTED toward distance_m; returns the ACTUAL distance_m
-  route             args: {"waypoints":[[lat,lon],...]}          -> road path through the waypoints
+  route             args: {"waypoints":[[lat,lon],...],"prefer":"quiet|direct" optional,"avoid":[..] optional}
+                    -> road path through the waypoints
+  search_routes     args: {"query":"<name>"} OR {}              -> real OSM routes [{"id","name","activity"}]
+                    (query = search by name e.g. "South West Coast Path"; {} = named routes near you)
+  load_route        args: {"id":<id from search_routes>}        -> builds that route's geometry
+  import_gpx_url    args: {"url":"<direct .gpx link>"}          -> imports a route from a GPX the user links
   list_routes       args: {}                                    -> {"routes":[{"file","name","distance_m"}]}
   delete_route      args: {"file":"<file from list_routes>"}    -> moves it to the recycle bin (recoverable)
+  rename_route      args: {"file":"<file>","name":"<new name>"} -> renames a saved route
+  share_route       args: {"file":"<file>"}                     -> opens the system share sheet
+Shaping: avoid can be any of ["steps","fords","ferries"]; prefer "quiet" favours greener/quieter
+paths, "direct" is the default. Use them when the user asks (hilly/flat is NOT supported — say so).
 Each tool result comes back to you as a user message prefixed "TOOL_RESULT".
 
 How to work:
 - Figure out the start (use current_location for "here"/"from here"; geocode named places).
 - If anything is ambiguous (which park? how far?), use action=reply to ask the user.
 - For "Nk loop" use round_trip; for "to X" / "via X and Y" geocode them and use route.
+- KNOWN/NAMED routes (trails, well-known long-distance paths): try search_routes by name and
+  load_route the best match BEFORE building one yourself.
+- ONE-OFF or ANNUAL RACES (e.g. a specific year's marathon / Great South Run): these change yearly
+  and are NOT reliably in any database — do NOT invent the course. search_routes; if nothing fits,
+  ask the user for the official GPX link (race website / Strava export / plotaroute) and use
+  import_gpx_url. Be honest that you can't reproduce an exact dated course from memory.
 - MATCH THE TARGET: round_trip returns the ACTUAL distance_m. If it's still off the user's
   requested distance by more than ~8%, call round_trip AGAIN (adjust distance_m, or a new seed)
   before finalising. Only action=final when the actual distance is close to what they asked.
 - UPDATE: to change an existing route ("make my 5k a 10k"), call list_routes, find its file,
   build the new geometry (round_trip/route), then action=final with "replace":"<file>".
-- DELETE: use delete_route (it's recoverable from the recycle bin, so it's safe).
-- After a routing tool returns ok and the distance is close, action=final. Never action=final
-  before a routing tool has succeeded. Keep replies short and friendly. Distances are metres.
+- DELETE: use delete_route (it's recoverable from the recycle bin, so it's safe). RENAME/SHARE
+  with rename_route / share_route (these act immediately — they aren't a final).
+- After a routing/load/import tool returns ok and the distance is close, action=final. Never
+  action=final before geometry exists. Keep replies short and friendly. Distances are metres.
 """.trim()
     }
 }

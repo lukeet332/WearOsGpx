@@ -1,5 +1,6 @@
 package com.wearosgpx.mobile.route
 
+import android.util.Xml
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -11,6 +12,7 @@ import java.net.URL
 import java.net.URLEncoder
 import kotlin.math.cos
 import kotlin.math.hypot
+import org.xmlpull.v1.XmlPullParser
 
 /**
  * Finds open-source routes from OpenStreetMap and turns them into GPX:
@@ -82,7 +84,11 @@ object RouteDiscoveryService {
         }
 
     /** Fetch a route relation's geometry and assemble it into an ordered GPX track. */
-    suspend fun buildGpx(route: DiscoveredRoute): String? = withContext(Dispatchers.IO) {
+    suspend fun buildGpx(route: DiscoveredRoute): String? =
+        buildPoints(route)?.let { GpxBuilder.build(route.name, it) }
+
+    /** Fetch + assemble a discovered route's ordered (lat, lon) track (for preview/save). */
+    suspend fun buildPoints(route: DiscoveredRoute): List<Pair<Double, Double>>? = withContext(Dispatchers.IO) {
         val query = "[out:json][timeout:90];rel(${route.id});>>;way._;out geom;"
         runCatching {
             val body = overpass(query)
@@ -96,10 +102,43 @@ object RouteDiscoveryService {
                     }?.takeIf { it.size >= 2 }
                 } ?: emptyList()
             if (ways.isEmpty()) return@withContext null
-            val ordered = decimate(assemble(ways))
-            if (ordered.size < 2) return@withContext null
-            GpxBuilder.build(route.name, ordered)
+            decimate(assemble(ways)).takeIf { it.size >= 2 }
         }.getOrNull()
+    }
+
+    /**
+     * Download a GPX file from a public [url] and pull out its track. Lets the AI ingest a
+     * route the user already has a link to — e.g. an official race course or a Strava export
+     * — when no OSM relation exists (annual races change yearly and aren't reliably mapped).
+     */
+    suspend fun importGpxUrl(url: String): List<Pair<Double, Double>>? = withContext(Dispatchers.IO) {
+        if (!url.startsWith("http://") && !url.startsWith("https://")) return@withContext null
+        runCatching {
+            decimate(parseGpxTrack(httpGet(url))).takeIf { it.size >= 2 }
+        }.getOrNull()
+    }
+
+    /** Parse trk/rte points out of a GPX document (wpt markers only if there's no track). */
+    private fun parseGpxTrack(xml: String): List<Pair<Double, Double>> {
+        val parser = Xml.newPullParser().apply {
+            setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
+            setInput(xml.reader())
+        }
+        val track = ArrayList<Pair<Double, Double>>()
+        val waypoints = ArrayList<Pair<Double, Double>>()
+        var event = parser.eventType
+        while (event != XmlPullParser.END_DOCUMENT) {
+            if (event == XmlPullParser.START_TAG) {
+                val lat = parser.getAttributeValue(null, "lat")?.toDoubleOrNull()
+                val lon = parser.getAttributeValue(null, "lon")?.toDoubleOrNull()
+                if (lat != null && lon != null) when (parser.name) {
+                    "trkpt", "rtept" -> track.add(lat to lon)
+                    "wpt" -> waypoints.add(lat to lon)
+                }
+            }
+            event = parser.next()
+        }
+        return if (track.isNotEmpty()) track else waypoints
     }
 
     // --- geometry assembly ---
