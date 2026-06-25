@@ -13,6 +13,21 @@ updates:
     labels: ["dependencies"]
     commit-message:
       prefix: "deps"
+    # These AndroidX libs raise their compileSdk/AGP floor in minor releases
+    # (e.g. core 1.19 / lifecycle 2.11 / activity 1.13 / health-connect 1.2 need
+    # compileSdk 37 + AGP 9.1). Hold them at patch-only until we deliberately do
+    # an AGP 9 / compileSdk 37 migration — otherwise they break the build.
+    ignore:
+      - dependency-name: "androidx.core:*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "androidx.lifecycle:*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "androidx.activity:*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "androidx.health.connect:*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "androidx.compose:compose-bom"
+        update-types: ["version-update:semver-major"]
     groups:
       androidx:
         patterns: ["androidx.*"]
