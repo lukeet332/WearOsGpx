@@ -532,10 +532,10 @@ fun WearApp(
                     else -> AnimatedContent(
                         targetState = screen,
                         transitionSpec = {
-                            // Forward (deeper) slides in from the right; back from the left.
+                            // Pure slide (no fade): the incoming opaque screen slides over the
+                            // outgoing one, so the map never bleeds through during a transition.
                             val dir = if (targetState.ordinal > initialState.ordinal) 1 else -1
-                            (slideInHorizontally { it * dir } + fadeIn()) togetherWith
-                                (slideOutHorizontally { -it * dir } + fadeOut())
+                            slideInHorizontally { it * dir } togetherWith slideOutHorizontally { -it * dir }
                         },
                         label = "nav",
                     ) { target ->
@@ -635,6 +635,9 @@ private enum class Screen { List, Preview, Activity, Finished, Settings }
 
 /** Neon green accent — shared with the phone companion for visual continuity. */
 private val Neon = Color(0xFF39FF14)
+
+/** Only surface a turn cue once within this distance (running pace, not driving). */
+private const val TURN_PROMPT_METERS = 30.0
 
 /** Scrollable list of available GPX routes. */
 @Composable
@@ -800,10 +803,16 @@ private fun PreviewScreen(
 /** GPS acquisition pill: colored dot + status text. */
 @Composable
 private fun GpsStatus(label: String, color: Color) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(Color.Black.copy(alpha = 0.55f))   // legible over the basemap
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+    ) {
         Box(Modifier.size(8.dp).clip(CircleShape).background(color))
         Spacer(Modifier.width(5.dp))
-        Text(label, color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.caption2)
+        Text(label, color = Color.White, style = MaterialTheme.typography.caption2)
     }
 }
 
@@ -956,6 +965,7 @@ private fun ActiveMap(route: GpxRoute?, state: ExerciseServiceState) {
             headingDegrees = heading,
             mode = MapMode.FOLLOW,
             viewRadiusMeters = viewRadius.value,
+            routeColor = Color(0xFF39FF14),   // bright course; stands above the grey basemap
             baseMap = rememberBaseMap(route),
         )
 
@@ -1034,7 +1044,8 @@ private fun NavigationCue(nav: NavProgress?, headingDeg: Float?, modifier: Modif
                 subtitle = "${formatDistanceShort(nav.crossTrackMeters)} · rejoin",
                 arrowDeg = nav.bearingToRouteDeg - (headingDeg ?: 0f),
             )
-            nav.nextTurn != null -> TurnPrompt(nav.nextTurn!!)
+            // Running, not driving: only surface a turn once you're close to it.
+            nav.nextTurn != null && nav.nextTurn!!.distanceMeters <= TURN_PROMPT_METERS -> TurnPrompt(nav.nextTurn!!)
             else -> Text(
                 text = "${"%.2f".format(nav.distanceRemainingMeters / 1000)} km to go",
                 color = Color.White.copy(alpha = 0.85f),
@@ -1044,31 +1055,23 @@ private fun NavigationCue(nav: NavProgress?, headingDeg: Float?, modifier: Modif
     }
 }
 
-/** Prominent turn-by-turn prompt: big directional arrow + "Turn left/right" + distance. */
+/** Minimal, on-theme turn cue: a neon arrow + distance in a dark pill. */
 @Composable
 private fun TurnPrompt(turn: UpcomingTurn) {
     val left = turn.direction == TurnDirection.LEFT
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(Color(0xFFF9A825))
-            .padding(horizontal = 20.dp, vertical = 6.dp),
+            .clip(RoundedCornerShape(50))
+            .background(Color.Black.copy(alpha = 0.7f))
+            .padding(horizontal = 14.dp, vertical = 5.dp),
     ) {
-        Text(
-            if (left) "↰" else "↱",
-            color = Color.Black,
-            style = MaterialTheme.typography.display3,
-        )
-        Text(
-            if (left) "Turn left" else "Turn right",
-            color = Color.Black,
-            style = MaterialTheme.typography.title3,
-        )
+        Text(if (left) "↰" else "↱", color = Neon, style = MaterialTheme.typography.title1)
         Text(
             "${turn.distanceMeters.roundToInt()} m",
-            color = Color.Black.copy(alpha = 0.75f),
-            style = MaterialTheme.typography.caption1,
+            color = Color.White,
+            style = MaterialTheme.typography.title3,
         )
     }
 }
@@ -1115,6 +1118,7 @@ private fun RunControls(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .background(Color.Black)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp, vertical = 28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1227,7 +1231,7 @@ private fun FinishedScreen(onDone: () -> Unit) {
     val repo = remember { RunRepository(WearGpxDatabase.getInstance(context).runDao()) }
     val run by repo.observeMostRecentCompletedRun().collectAsStateWithLifecycle(initialValue = null)
 
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
         val r = run
         if (r == null) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Saving…") }

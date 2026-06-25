@@ -189,7 +189,11 @@ private fun DrawScope.drawFollow(
     }
 }
 
-/** Shared: dim planned route + neon glow track + start dot. */
+/**
+ * Course = the line to follow, drawn BRIGHT (with a glow) so it stands out above the
+ * grey basemap. The completed track (where you've already been) is drawn FADED behind
+ * it, so the upcoming route always dominates.
+ */
 private fun DrawScope.drawRouteAndTrack(
     routePts: List<Offset>,
     trackPts: List<Offset>,
@@ -197,19 +201,20 @@ private fun DrawScope.drawRouteAndTrack(
     neon: Color,
     glow: Boolean,
 ) {
-    if (routePts.size >= 2) {
-        val w = if (glow) 2.dp.toPx() else 1.dp.toPx()
-        drawPath(pathOf(routePts), routeColor, style = Stroke(w, cap = StrokeCap.Round, join = StrokeJoin.Round))
-    }
+    // Completed track first (underneath) — faded so it recedes.
     if (trackPts.size >= 2) {
         val p = pathOf(trackPts)
+        val w = if (glow) 3.dp.toPx() else 1.5.dp.toPx()
+        drawPath(p, neon.copy(alpha = if (glow) 0.35f else 0.5f), style = Stroke(w, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+    // Upcoming route on top — bright hero line with a soft glow.
+    if (routePts.size >= 2) {
+        val p = pathOf(routePts)
         if (glow) {
-            drawPath(p, neon.copy(alpha = 0.12f), style = Stroke(12.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-            drawPath(p, neon.copy(alpha = 0.30f), style = Stroke(6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-            drawPath(p, neon, style = Stroke(2.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+            drawPath(p, routeColor.copy(alpha = 0.18f), style = Stroke(10.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+            drawPath(p, routeColor, style = Stroke(3.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
         } else {
-            // Ambient: a single thin stroke, no glow halo.
-            drawPath(p, neon, style = Stroke(1.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+            drawPath(p, routeColor, style = Stroke(1.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
         }
     }
     if (glow) {

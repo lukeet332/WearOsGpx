@@ -41,6 +41,7 @@ class RouteNavigator(
     private val offCourseEnterMeters: Double = 40.0,
     private val offCourseExitMeters: Double = 25.0,
     private val turnLookaheadMeters: Double = 120.0,
+    private val turnMinAngleDeg: Double = 50.0,   // only proper bends, not gentle curves
 ) {
     private val cumDist: DoubleArray
     private val segLen: DoubleArray
@@ -126,7 +127,8 @@ class RouteNavigator(
     /**
      * Significant turns from route geometry: at each vertex compare the incoming
      * and outgoing bearing using neighbours at least ~8 m away (so GPS jitter on
-     * dense tracks doesn't register as turns), keeping turns sharper than 30°.
+     * dense tracks doesn't register as turns), keeping only proper bends
+     * (>= [turnMinAngleDeg]) so gentle curves don't trigger a cue.
      */
     private fun detectTurns(): List<TurnInternal> {
         val result = mutableListOf<TurnInternal>()
@@ -137,7 +139,7 @@ class RouteNavigator(
             val bIn = GeoUtils.bearingDegrees(points[prev], points[j]).toDouble()
             val bOut = GeoUtils.bearingDegrees(points[j], points[next]).toDouble()
             val angle = normalize180(bOut - bIn)
-            if (kotlin.math.abs(angle) >= 30.0) {
+            if (kotlin.math.abs(angle) >= turnMinAngleDeg) {
                 val dir = if (angle > 0) TurnDirection.RIGHT else TurnDirection.LEFT
                 result += TurnInternal(cumDist[j], dir, angle)
             }
