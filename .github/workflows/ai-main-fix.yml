@@ -84,7 +84,7 @@ jobs:
             .github/AI_CONTEXT.md
           body: |
             CI failed on **main**. **${{ steps.fix.outputs.bot_label || 'The AI fix bot' }}**
-            (`${{ steps.fix.outputs.model_used }}`, Gemini fallback) analysed the failure log
+            (`${{ steps.fix.outputs.model_used }}`) analysed the failure log
             and proposes this fix. It must pass CI before auto-merge; if the first attempt
             is imperfect, `pr-self-heal.yml` will iterate (max 3).
 
