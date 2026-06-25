@@ -108,6 +108,10 @@ jobs:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
         run: python .github/scripts/ai_fix.py             # active model from .github/ai_model.json
 
+      - name: Auto-format the changed Kotlin (ktlint)
+        if: startsWith(env.BRANCH, 'gemini/') && steps.guard.outputs.stop == 'false'
+        run: bash .github/scripts/format_changed.sh
+
       - name: Push the fix (re-runs CI) or report no fix
         if: startsWith(env.BRANCH, 'gemini/') && steps.guard.outputs.stop == 'false'
         env:
