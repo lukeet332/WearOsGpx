@@ -86,7 +86,7 @@ jobs:
 
       - name: Set up Python
         if: startsWith(env.BRANCH, 'ai-fix(') && steps.guard.outputs.stop == 'false'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with: { python-version: '3.12' }
 
       - name: Fetch the CI failure log
