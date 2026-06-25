@@ -95,6 +95,12 @@
             android:label="Create route"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
 
+        <activity
+            android:name=".settings.SettingsActivity"
+            android:exported="false"
+            android:label="Settings"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="com.wearosgpx.fileprovider"

@@ -81,6 +81,7 @@ import com.wearosgpx.mobile.route.PhoneRouteStore
 import com.wearosgpx.mobile.route.RouteCreatorActivity
 import com.wearosgpx.mobile.route.RouteDiscoveryService
 import com.wearosgpx.mobile.settings.AppSettings
+import com.wearosgpx.mobile.settings.SettingsActivity
 import com.wearosgpx.mobile.strava.StravaClient
 import com.wearosgpx.mobile.sync.RunImporter
 import com.wearosgpx.mobile.sync.WatchRoutes
@@ -113,9 +114,8 @@ class MainActivity : ComponentActivity() {
 
     private val hcAvailable = mutableStateOf(true)
     private val hcGranted = mutableStateOf(false)
-    private val stravaConnected = mutableStateOf(false)
-    private val stravaAthlete = mutableStateOf<String?>(null)
     private val routes = mutableStateOf<List<RouteRow>>(emptyList())
+    private var permissionFlowThisLaunch = false   // true on the first-run permission launch
 
     private val requestPermissions = registerForActivityResult(
         PermissionController.createRequestPermissionResultContract()
@@ -140,17 +140,12 @@ class MainActivity : ComponentActivity() {
             val available by hcAvailable
             val granted by hcGranted
             val routeList by routes
-            val stravaOn by stravaConnected
-            val athlete by stravaAthlete
             CompanionApp(
                 hcAvailable = available,
                 hcGranted = granted,
-                stravaConnected = stravaOn,
-                stravaAthlete = athlete,
                 routes = routeList,
                 onGrant = ::onGrantClicked,
-                onConnectStrava = ::onConnectStrava,
-                onDisconnectStrava = ::onDisconnectStrava,
+                onOpenSettings = { startActivity(Intent(this, SettingsActivity::class.java)) },
                 onImport = { pickGpx.launch(arrayOf("application/gpx+xml", "application/xml", "text/xml", "application/octet-stream")) },
                 onCreate = { startActivity(Intent(this, RouteCreatorActivity::class.java)) },
                 onDelete = ::deleteRoute,
@@ -249,27 +244,26 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         refreshHealthConnect()
-        refreshStrava()
         refreshRoutes()
         syncQueuedRuns(auto = true)
+        promptForKeysOnce()
     }
 
-    private fun refreshStrava() {
-        stravaConnected.value = StravaClient.isConnected(this)
-        stravaAthlete.value = StravaClient.connectedAthlete(this)
-    }
-
-    private fun onConnectStrava() {
-        if (!StravaClient.isConfigured()) {
-            Toast.makeText(this, "Strava API keys not set in this build.", Toast.LENGTH_LONG).show(); return
-        }
-        runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(StravaClient.authorizeUrl()))) }
-            .onFailure { Toast.makeText(this, "Couldn't open Strava", Toast.LENGTH_LONG).show() }
-    }
-
-    private fun onDisconnectStrava() {
-        StravaClient.disconnect(this); refreshStrava()
-        Toast.makeText(this, "Disconnected from Strava", Toast.LENGTH_SHORT).show()
+    /**
+     * If a required API key is missing, open Settings once (with a prompt banner) so the
+     * user can add it + follow the "get a key" links. Skipped on the first-run launch so
+     * it doesn't collide with the permission dialogs; fires on a later launch instead.
+     */
+    private fun promptForKeysOnce() {
+        if (permissionFlowThisLaunch) return
+        val prefs = getSharedPreferences("perms", MODE_PRIVATE)
+        if (prefs.getBoolean("prompted_keys", false)) return
+        if (!AppSettings.requiredKeysMissing(this)) return
+        prefs.edit().putBoolean("prompted_keys", true).apply()
+        startActivity(
+            Intent(this, SettingsActivity::class.java)
+                .putExtra(SettingsActivity.EXTRA_PROMPT, true)
+        )
     }
 
     /** Catch the OAuth redirect (wearosgpx://localhost?code=…) and exchange for tokens. */
@@ -282,7 +276,6 @@ class MainActivity : ComponentActivity() {
         }
         lifecycleScope.launch {
             val ok = StravaClient.exchangeCode(applicationContext, code)
-            refreshStrava()
             Toast.makeText(
                 this@MainActivity,
                 if (ok) "Connected to Strava — runs will upload automatically" else "Strava connection failed",
@@ -316,6 +309,7 @@ class MainActivity : ComponentActivity() {
         val prefs = getSharedPreferences("perms", MODE_PRIVATE)
         if (prefs.getBoolean("requested_initial", false)) return
         prefs.edit().putBoolean("requested_initial", true).apply()
+        permissionFlowThisLaunch = true   // don't also pop Settings on this same launch
 
         val haveLocation =
             ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
@@ -494,12 +488,9 @@ class MainActivity : ComponentActivity() {
 private fun CompanionApp(
     hcAvailable: Boolean,
     hcGranted: Boolean,
-    stravaConnected: Boolean,
-    stravaAthlete: String?,
     routes: List<RouteRow>,
     onGrant: () -> Unit,
-    onConnectStrava: () -> Unit,
-    onDisconnectStrava: () -> Unit,
+    onOpenSettings: () -> Unit,
     onImport: () -> Unit,
     onCreate: () -> Unit,
     onDelete: (RouteRow) -> Unit,
@@ -520,7 +511,6 @@ private fun CompanionApp(
         )
     ) {
         var detail by remember { mutableStateOf<RouteRow?>(null) }
-        var showSettings by remember { mutableStateOf(false) }
         var showDiscover by remember { mutableStateOf(false) }
 
         Column(
@@ -540,7 +530,7 @@ private fun CompanionApp(
                     Text("WearOsGpx", color = Neon, fontSize = 26.sp, fontWeight = FontWeight.Bold)
                     Text("Companion", color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp)
                 }
-                TextButton(onClick = { showSettings = true }) { Text("Settings", color = Neon) }
+                TextButton(onClick = onOpenSettings) { Text("Settings", color = Neon) }
             }
 
             Spacer(Modifier.height(20.dp))
@@ -606,16 +596,6 @@ private fun CompanionApp(
                 onSendToWatch = { onSendToWatch(row); detail = null },
                 onDelete = { onDelete(row); detail = null },
                 onDismiss = { detail = null },
-            )
-        }
-
-        if (showSettings) {
-            SettingsDialog(
-                stravaConnected = stravaConnected,
-                stravaAthlete = stravaAthlete,
-                onConnectStrava = onConnectStrava,
-                onDisconnectStrava = onDisconnectStrava,
-                onDismiss = { showSettings = false },
             )
         }
 
@@ -736,86 +716,6 @@ private fun DiscoverScreen(
                         TextButton(onClick = { onAdd(route); onClose() }) { Text("Add", color = Neon) }
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SettingsDialog(
-    stravaConnected: Boolean,
-    stravaAthlete: String?,
-    onConnectStrava: () -> Unit,
-    onDisconnectStrava: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val context = LocalContext.current
-    var key by remember { mutableStateOf(AppSettings.storedOrsKey(context)) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = Color(0xFF1A1A1A),
-        title = { Text("Settings", color = Color.White) },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text("OpenRouteService API key", color = Color.White, fontSize = 15.sp)
-                Text(
-                    "Used for road-following route creation. Leave blank to use the built-in default. " +
-                        "Get a free key at openrouteservice.org.",
-                    color = Color.White.copy(alpha = 0.6f),
-                    fontSize = 13.sp,
-                )
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(
-                    value = key,
-                    onValueChange = { key = it },
-                    singleLine = true,
-                    label = { Text("API key") },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-
-                Spacer(Modifier.height(20.dp))
-                Text("Strava (optional)", color = Color.White, fontSize = 15.sp)
-                Text(
-                    "Auto-upload finished runs to Strava as well. Your primary sync is Health " +
-                        "Connect (read by Samsung Health) — Strava is an extra.",
-                    color = Color.White.copy(alpha = 0.6f),
-                    fontSize = 13.sp,
-                )
-                Spacer(Modifier.height(8.dp))
-                StravaCard(stravaConnected, stravaAthlete, onConnectStrava, onDisconnectStrava)
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { AppSettings.setOrsKey(context, key); onDismiss() }) {
-                Text("Save", color = Neon)
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Close", color = Neon) } },
-    )
-}
-
-@Composable
-private fun StravaCard(connected: Boolean, athlete: String?, onConnect: () -> Unit, onDisconnect: () -> Unit) {
-    val stravaOrange = Color(0xFFFC4C02)
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1A1A)),
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Text(
-                if (connected) "✓ Strava connected${athlete?.let { " · $it" } ?: ""}. Runs upload automatically."
-                else "Connect Strava to auto-upload each finished run as an activity.",
-                color = if (connected) stravaOrange else Color.White,
-                fontSize = 14.sp,
-            )
-            Spacer(Modifier.height(12.dp))
-            if (connected) {
-                TextButton(onClick = onDisconnect) { Text("Disconnect Strava", color = Color(0xFFFF6B6B)) }
-            } else {
-                Button(
-                    onClick = onConnect,
-                    colors = ButtonDefaults.buttonColors(containerColor = stravaOrange, contentColor = Color.White),
-                ) { Text("Connect Strava", fontWeight = FontWeight.SemiBold) }
             }
         }
     }
