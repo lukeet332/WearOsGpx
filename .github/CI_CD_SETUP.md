@@ -7,9 +7,9 @@ The pipeline:
 |---|---|
 | `dependabot.yml` | Weekly dependency PRs (Gradle catalog + Actions) |
 | `workflows/ci.yml` | JVM unit tests on every PR → the required status check |
-| `workflows/gemini-maintenance.yml` + `scripts/gemini_fix.py` | Weekly Gemini fix bot → PR |
+| `workflows/gemini-maintenance.yml` + `scripts/ai_fix.py` | 2×/week AI fix bot → PR (model from `ai_model.json`) |
 | `workflows/auto-merge.yml` | Auto-merges bot PRs once CI is green |
-| `workflows/deploy.yml` | (existing) Play internal-testing deploy on push to `main` |
+| `workflows/release.yml` | On a meaningful change to `main`: AI version → GitHub Release **and** Play internal-testing upload (same version), gated by the `PLAY_DEPLOY_ENABLED` variable |
 
 ## 0. Note on the Gemini model
 There is no "Gemini 3.5 Flash". The current **free-tier** Flash model on Google AI
@@ -21,7 +21,7 @@ Studio is **`gemini-2.5-flash`** — that's what the workflow uses (override via
 |---|---|---|
 | `GEMINI_API_KEY` | Gemini bot | aistudio.google.com → "Get API key" (free) |
 | `BOT_PAT` | Gemini bot's PR | A **fine-grained PAT** (see below) |
-| `PLAY_SERVICE_ACCOUNT_JSON`, `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` | deploy.yml | (already set for your Play deploy) |
+| `PLAY_SERVICE_ACCOUNT_JSON`, `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` | release.yml (Play upload) | (already set). Play upload also needs the **`PLAY_DEPLOY_ENABLED=true`** repo *variable* |
 
 **Why `BOT_PAT`?** A PR opened with the default `GITHUB_TOKEN` does **not** trigger
 other workflows (GitHub anti-recursion). The Gemini PR must trigger `ci.yml` and

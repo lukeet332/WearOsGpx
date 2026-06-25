@@ -2,8 +2,9 @@ name: Release
 
 # Runs only AFTER CI passes on main, so a release can never be cut from a broken /
 # non-compiling main. An AI picks the next SemVer bump from the commits, builds both
-# signed APKs, tags the commit, and publishes a GitHub Release with the phone + Wear
-# APKs attached. (Play deployment stays in deploy.yml.)
+# signed APKs, tags the commit, publishes a GitHub Release, AND (if PLAY_DEPLOY_ENABLED)
+# uploads the AABs to Play internal testing — all with the SAME version, so the Play
+# versionName matches the GitHub release vX.Y.Z (no divergence).
 on:
   workflow_run:
     workflows: ["CI"]
@@ -116,7 +117,9 @@ jobs:
 
       - name: Compute version code
         id: vc
-        run: echo "code=$(( 1000 + GITHUB_RUN_NUMBER ))" >> "$GITHUB_OUTPUT"
+        # Shared by the APKs and the Play AABs. Base 2000 keeps it above the legacy Play
+        # uploads (phone 1071 / wear +100000) and always increasing.
+        run: echo "code=$(( 2000 + GITHUB_RUN_NUMBER ))" >> "$GITHUB_OUTPUT"
 
       - name: Build signed release APKs
         env:
@@ -151,3 +154,40 @@ jobs:
             (`${{ steps.ver.outputs.bump }}` bump, decided by AI from the merged changes).
 
             **Downloads:** the phone APK and the Wear OS APK are attached below.
+
+      # ---- Play Store (internal testing) — SAME version as the GitHub release above ----
+      # Gated by the PLAY_DEPLOY_ENABLED repo variable, and runs AFTER the GitHub release
+      # is published so a Play hiccup never blocks the release. Reuses VERSION_NAME (the
+      # vX.Y.Z just released) + VERSION_CODE, so Play's versionName matches GitHub.
+      - name: Build signed release bundles (AABs)
+        if: vars.PLAY_DEPLOY_ENABLED == 'true'
+        env:
+          VERSION_NAME: ${{ steps.ver.outputs.new_version }}
+          VERSION_CODE: ${{ steps.vc.outputs.code }}
+          KEYSTORE_FILE: ${{ github.workspace }}/upload-keystore.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          ORS_API_KEY: ${{ secrets.ORS_API_KEY }}
+        run: ./gradlew :mobile:bundleRelease :wear:bundleRelease --no-daemon
+
+      - name: Upload phone app to Play (internal)
+        if: vars.PLAY_DEPLOY_ENABLED == 'true'
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.wearosgpx
+          releaseFiles: mobile/build/outputs/bundle/release/mobile-release.aab
+          tracks: internal
+          status: completed
+
+      # Wear OS apps must publish to a DEDICATED Wear OS track (Aug 2023 policy).
+      - name: Upload Wear OS app to Play (wear:internal)
+        if: vars.PLAY_DEPLOY_ENABLED == 'true'
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.wearosgpx
+          releaseFiles: wear/build/outputs/bundle/release/wear-release.aab
+          tracks: wear:internal
+          status: completed
