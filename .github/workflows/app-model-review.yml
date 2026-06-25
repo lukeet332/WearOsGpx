@@ -46,15 +46,14 @@ jobs:
           delete-branch: true
           add-paths: mobile/src/main/res/raw/recommended_models.json
           commit-message: "chore: refresh AI route model list (${{ steps.review.outputs.providers }})"
-          title: "🤖 Refresh AI route model menu (default: ${{ steps.review.outputs.default }})"
+          title: "🤖 Refresh AI route model menu (default: ${{ steps.review.outputs.default_model }})"
           labels: automerge
           body: |
-            Weekly re-pick of a **diverse, best-first menu of free models** for the AI
-            running-route chatbot, spanning providers. Every model was **validated with a
-            live call** against its real provider before being written. The default (first)
-            prefers the current provider so most users' keys keep working; if the default
-            provider switched (`switched=${{ steps.review.outputs.switched }}`), the app
-            prompts those users for a key for the new provider rather than break. Ships in
-            the next release; the in-app dropdown + "Auto" default pick this up.
+            Weekly refresh of the AI running-route chatbot's model menu. The **default stays
+            a Google Gemini model** (only ever updated to a newer *Gemini* — so a user's
+            single key never breaks); the rest are a **diverse set of free models from other
+            providers**, offered as opt-in alternatives. Every model was **validated with a
+            live call** against its real provider before being written. Ships in the next
+            release; the in-app dropdown + "Auto" default pick this up.
 
             Review the diff before trusting it.
