@@ -9,8 +9,14 @@ import android.os.Bundle
 import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -555,7 +561,13 @@ private fun CompanionApp(
             )
         }
 
-        if (showDiscover) {
+        // Back closes the Discover overlay instead of exiting the app.
+        BackHandler(enabled = showDiscover) { showDiscover = false }
+        AnimatedVisibility(
+            visible = showDiscover,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+        ) {
             DiscoverScreen(
                 onAdd = onAddDiscovered,
                 lastLocation = lastLocation,
