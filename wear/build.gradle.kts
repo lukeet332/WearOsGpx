@@ -96,6 +96,7 @@ dependencies {
 
     // Wear (ambient / always-on support)
     implementation(libs.androidx.wear)
+    implementation(libs.androidx.wear.ongoing)   // watch-face run chip (Power-saver mode)
 
     // Wear Compose
     implementation(libs.wear.compose.material)

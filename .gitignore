@@ -10,3 +10,6 @@
 */build/
 /keystore.properties
 /keystore/
+
+# Kotlin build cache
+.kotlin/

@@ -156,6 +156,26 @@ use. The rule: **never force the application processor (W5) awake.**
 
 ## Key gotchas learned
 
+- **Health Connect write validation is strict and throws (silently, if you swallow it).** Two real
+  failures that killed run sync: (1) `HeartRateRecord.Sample` requires `beatsPerMinute` in **1..300** —
+  WHS emits **0-bpm** sensor-gap samples, so filter `hr >= 1` (and clamp). (2) `ExerciseRoute` requires
+  **strictly increasing timestamps** — WHS can deliver multiple points sharing a millisecond, so
+  **sort + `distinctBy { epochMillis }`** the points before building the route. `HealthConnectWriter`
+  does both. The run reaching the phone is NOT the issue — the **HC insert** is where it breaks.
+- **Sync resilience:** `RunImporter` (mobile) is the single write path for both the live
+  `RunSyncListenerService` and an app-open **catch-up** (`MainActivity.onResume` → `importQueued`, plus a
+  "Re-sync watch runs" button). It scans the Data Layer for queued `/run` items and writes any not already
+  imported, **de-duped by run start time** in SharedPreferences — so the listener and the catch-up can't
+  double-insert. A missed/failed delivery self-heals on next open.
+- **Debugging the phone↔watch↔HC pipeline over adb:** watch + phone connect via **wireless adb** (mDNS;
+  `adb mdns services` to find the live `_adb-tls-connect` endpoint — **IP and port change** when the device
+  re-joins wifi / wireless-debugging pauses on screen-off, and stale serials make `adb -s` *hang*, so
+  always re-resolve). Watch package = `com.wearosgpx`, activity is under the `.mobile` namespace
+  (`am start` needs `com.wearosgpx/com.wearosgpx.mobile.MainActivity`, or just
+  `monkey -p com.wearosgpx -c android.intent.category.LAUNCHER 1`). No `sqlite3` on the watch — pull the
+  Room DB with `adb exec-out run-as com.wearosgpx cat databases/wear_gpx.db` and query locally.
+  `RunImporter.logRecentSessions` dumps existing HC sessions (origin/route/title) for format comparison;
+  needs READ_* health perms which **can't be `pm grant`-ed** (HC manages them) — best-effort only.
 - WHS returns Guava `ListenableFuture` → needs `com.google.guava:guava` on the compile classpath plus
   `androidx.concurrent:concurrent-futures-ktx` for `.await()`.
 - The `health` foreground-service type requires `BODY_SENSORS` granted at runtime (API 34+) or

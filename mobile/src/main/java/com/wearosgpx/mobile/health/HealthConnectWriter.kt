@@ -41,7 +41,14 @@ class HealthConnectWriter(private val context: Context) {
         val startOffset = zone.rules.getOffset(start)
         val endOffset = zone.rules.getOffset(end)
 
-        val routeLocations = payload.points.map { p ->
+        // ExerciseRoute and HeartRateRecord both require strictly increasing
+        // timestamps; WHS can deliver several samples sharing a millisecond, so
+        // order the points and drop duplicate-time ones up front.
+        val orderedPoints = payload.points
+            .sortedBy { it.epochMillis }
+            .distinctBy { it.epochMillis }
+
+        val routeLocations = orderedPoints.map { p ->
             ExerciseRoute.Location(
                 time = Instant.ofEpochMilli(p.epochMillis),
                 latitude = p.lat,
@@ -74,9 +81,15 @@ class HealthConnectWriter(private val context: Context) {
             )
         }
 
-        val hrSamples = payload.points
-            .filter { it.hr != null }
-            .map { HeartRateRecord.Sample(Instant.ofEpochMilli(it.epochMillis), it.hr!!.toLong()) }
+        // Health Connect requires beatsPerMinute in 1..300 — drop sensor-gap zeros.
+        val hrSamples = orderedPoints
+            .filter { (it.hr ?: 0.0) >= 1.0 }
+            .map {
+                HeartRateRecord.Sample(
+                    Instant.ofEpochMilli(it.epochMillis),
+                    it.hr!!.toLong().coerceIn(1, 300),
+                )
+            }
         if (hrSamples.isNotEmpty()) {
             records += HeartRateRecord(
                 startTime = start,

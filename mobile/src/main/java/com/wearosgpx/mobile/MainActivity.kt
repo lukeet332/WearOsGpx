@@ -50,6 +50,8 @@ import com.wearosgpx.mobile.route.GpxMeta
 import com.wearosgpx.mobile.route.PhoneRouteStore
 import com.wearosgpx.mobile.route.RouteCreatorActivity
 import com.wearosgpx.mobile.settings.AppSettings
+import com.wearosgpx.mobile.strava.StravaClient
+import com.wearosgpx.mobile.sync.RunImporter
 import com.wearosgpx.mobile.sync.WatchRoutes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -79,6 +81,8 @@ class MainActivity : ComponentActivity() {
 
     private val hcAvailable = mutableStateOf(true)
     private val hcGranted = mutableStateOf(false)
+    private val stravaConnected = mutableStateOf(false)
+    private val stravaAthlete = mutableStateOf<String?>(null)
     private val routes = mutableStateOf<List<RouteRow>>(emptyList())
 
     private val requestPermissions = registerForActivityResult(
@@ -91,29 +95,97 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleStravaRedirect(intent)
         setContent {
             val available by hcAvailable
             val granted by hcGranted
             val routeList by routes
+            val stravaOn by stravaConnected
+            val athlete by stravaAthlete
             CompanionApp(
                 hcAvailable = available,
                 hcGranted = granted,
+                stravaConnected = stravaOn,
+                stravaAthlete = athlete,
                 routes = routeList,
                 onGrant = ::onGrantClicked,
+                onConnectStrava = ::onConnectStrava,
+                onDisconnectStrava = ::onDisconnectStrava,
                 onImport = { pickGpx.launch(arrayOf("application/gpx+xml", "application/xml", "text/xml", "application/octet-stream")) },
                 onCreate = { startActivity(Intent(this, RouteCreatorActivity::class.java)) },
                 onDelete = ::deleteRoute,
                 onShare = ::shareRoute,
                 onSendToWatch = ::sendToWatch,
                 onRefresh = ::refreshRoutes,
+                onResync = { syncQueuedRuns(auto = false) },
             )
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleStravaRedirect(intent)
     }
 
     override fun onResume() {
         super.onResume()
         refreshHealthConnect()
+        refreshStrava()
         refreshRoutes()
+        syncQueuedRuns(auto = true)
+    }
+
+    private fun refreshStrava() {
+        stravaConnected.value = StravaClient.isConnected(this)
+        stravaAthlete.value = StravaClient.connectedAthlete(this)
+    }
+
+    private fun onConnectStrava() {
+        if (!StravaClient.isConfigured()) {
+            Toast.makeText(this, "Strava API keys not set in this build.", Toast.LENGTH_LONG).show(); return
+        }
+        runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(StravaClient.authorizeUrl()))) }
+            .onFailure { Toast.makeText(this, "Couldn't open Strava", Toast.LENGTH_LONG).show() }
+    }
+
+    private fun onDisconnectStrava() {
+        StravaClient.disconnect(this); refreshStrava()
+        Toast.makeText(this, "Disconnected from Strava", Toast.LENGTH_SHORT).show()
+    }
+
+    /** Catch the OAuth redirect (wearosgpx://localhost?code=…) and exchange for tokens. */
+    private fun handleStravaRedirect(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (data.scheme != "wearosgpx" || data.host != "localhost") return
+        val code = data.getQueryParameter("code")
+        if (code == null) {
+            Toast.makeText(this, "Strava authorization cancelled", Toast.LENGTH_LONG).show(); return
+        }
+        lifecycleScope.launch {
+            val ok = StravaClient.exchangeCode(applicationContext, code)
+            refreshStrava()
+            Toast.makeText(
+                this@MainActivity,
+                if (ok) "Connected to Strava — runs will upload automatically" else "Strava connection failed",
+                Toast.LENGTH_LONG,
+            ).show()
+            if (ok) syncQueuedRuns(auto = true)   // upload any already-recorded runs
+        }
+    }
+
+    /** Catch up any runs still queued on the Data Layer (e.g. delivered while asleep). */
+    private fun syncQueuedRuns(auto: Boolean) {
+        lifecycleScope.launch {
+            RunImporter.logRecentSessions(applicationContext)
+            val written = withContext(Dispatchers.IO) {
+                RunImporter.importQueued(applicationContext, if (auto) "resume" else "manual")
+            }
+            if (!auto) {
+                val msg = if (written > 0) "Synced $written run(s) to Health Connect" else "No new runs to sync"
+                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     private fun onGrantClicked() {
@@ -234,14 +306,19 @@ class MainActivity : ComponentActivity() {
 private fun CompanionApp(
     hcAvailable: Boolean,
     hcGranted: Boolean,
+    stravaConnected: Boolean,
+    stravaAthlete: String?,
     routes: List<RouteRow>,
     onGrant: () -> Unit,
+    onConnectStrava: () -> Unit,
+    onDisconnectStrava: () -> Unit,
     onImport: () -> Unit,
     onCreate: () -> Unit,
     onDelete: (RouteRow) -> Unit,
     onShare: (RouteRow) -> Unit,
     onSendToWatch: (RouteRow) -> Unit,
     onRefresh: () -> Unit,
+    onResync: () -> Unit,
 ) {
     MaterialTheme(
         colorScheme = darkColorScheme(
@@ -277,6 +354,18 @@ private fun CompanionApp(
 
             Spacer(Modifier.height(20.dp))
             HealthConnectCard(hcAvailable, hcGranted, onGrant)
+
+            if (hcGranted) {
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = onResync,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A), contentColor = Neon),
+                ) { Text("Re-sync watch runs") }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            StravaCard(stravaConnected, stravaAthlete, onConnectStrava, onDisconnectStrava)
 
             Spacer(Modifier.height(16.dp))
             Button(
@@ -364,6 +453,33 @@ private fun SettingsDialog(onDismiss: () -> Unit) {
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = Neon) } },
     )
+}
+
+@Composable
+private fun StravaCard(connected: Boolean, athlete: String?, onConnect: () -> Unit, onDisconnect: () -> Unit) {
+    val stravaOrange = Color(0xFFFC4C02)
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1A1A)),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(
+                if (connected) "✓ Strava connected${athlete?.let { " · $it" } ?: ""}. Runs upload automatically."
+                else "Connect Strava to auto-upload each finished run as an activity.",
+                color = if (connected) stravaOrange else Color.White,
+                fontSize = 14.sp,
+            )
+            Spacer(Modifier.height(12.dp))
+            if (connected) {
+                TextButton(onClick = onDisconnect) { Text("Disconnect Strava", color = Color(0xFFFF6B6B)) }
+            } else {
+                Button(
+                    onClick = onConnect,
+                    colors = ButtonDefaults.buttonColors(containerColor = stravaOrange, contentColor = Color.White),
+                ) { Text("Connect Strava", fontWeight = FontWeight.SemiBold) }
+            }
+        }
+    }
 }
 
 @Composable

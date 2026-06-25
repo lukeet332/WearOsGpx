@@ -9,8 +9,10 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -105,7 +107,10 @@ import com.wearosgpx.data.local.LapEntity
 import com.wearosgpx.data.local.WearGpxDatabase
 import com.wearosgpx.data.repository.RunRepository
 import com.wearosgpx.navigation.NavProgress
+import com.wearosgpx.settings.RunDisplayMode
+import com.wearosgpx.settings.WatchSettings
 import com.wearosgpx.navigation.TurnDirection
+import com.wearosgpx.navigation.UpcomingTurn
 import com.wearosgpx.presentation.map.BreadcrumbCanvas
 import com.wearosgpx.presentation.map.MapMode
 import com.wearosgpx.sync.RouteIndexPublisher
@@ -138,18 +143,35 @@ class MainActivity : ComponentActivity() {
     /** The route to navigate for the next run (chosen on the preview screen). */
     private var routePoints: List<GeoPoint>? = null
 
-    // Always-on / ambient state. The observer is registered only during a run, so
-    // non-run screens keep normal screen-off + wrist-raise/touch relight behaviour.
+    // Always-on / ambient state. The observer MUST be attached in onCreate (not
+    // dynamically) or the system never marks our activity always-on and hands the
+    // screen to the watch face on timeout. We instead gate behaviour on [wantAmbient]:
+    // during a run we stay in our dim ambient screen (W5 can sleep, ~1 Hz updates);
+    // otherwise we step aside so the normal watch face shows.
     private val isAmbient = mutableStateOf(false)
     private val ambientTick = mutableStateOf(0)  // bumped ~once/min so ambient stats refresh
-    private var ambientRegistered = false
+    private var wantAmbient = false
+
+    // Self-managed dim: the 2R won't let a third-party app hold the *system* ambient
+    // display (it reverts to the watch face), so during a run we keep the screen on
+    // and dim it ourselves after [DIM_AFTER_MS] of no touch — rendering the dark
+    // ambient screen + dropping brightness to near-zero (real OLED saving). A tap
+    // brightens again. The GPS/HR sensing stays on the BES2700 regardless.
+    private var dimJob: Job? = null
+    private var lastTouchMs = 0L
+    private var runMode = RunDisplayMode.ALWAYS_ON
+    private var dimmed = false
 
     private val ambientObserver: AmbientLifecycleObserver by lazy {
         AmbientLifecycleObserver(
             this,
             object : AmbientLifecycleObserver.AmbientLifecycleCallback {
                 override fun onEnterAmbient(ambientDetails: AmbientLifecycleObserver.AmbientDetails) {
-                    isAmbient.value = true
+                    if (wantAmbient) {
+                        isAmbient.value = true            // stay in our low-power run screen
+                    } else {
+                        moveTaskToBack(true)              // not running → let the watch face show
+                    }
                 }
                 override fun onUpdateAmbient() {
                     ambientTick.value = ambientTick.value + 1
@@ -206,6 +228,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         permissionsGranted.value = hasEssentialPermissions()
+        // Arm always-on once, up front — attaching it lazily mid-run never marks the
+        // activity always-on, so the watch face takes over on screen timeout.
+        lifecycle.addObserver(ambientObserver)
         // Publish the route catalog so the phone can list/inspect/delete routes.
         lifecycleScope.launch(Dispatchers.IO) {
             runCatching { RouteIndexPublisher.publish(applicationContext) }
@@ -314,19 +339,77 @@ class MainActivity : ComponentActivity() {
         ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
 
-    /** Register always-on only during a run; tear it down (and exit ambient) otherwise. */
+    /**
+     * Toggled by the run state. During a run we hold the screen on (so it never
+     * times out to the watch face — the OEM won't let us own the system ambient
+     * display) and run our own dim timer. Cleared when the run ends so normal
+     * screen-off + wrist-raise behaviour returns.
+     */
     private fun setAlwaysOn(enabled: Boolean) {
-        if (enabled && !ambientRegistered) {
-            lifecycle.addObserver(ambientObserver)
-            ambientRegistered = true
-        } else if (!enabled && ambientRegistered) {
-            lifecycle.removeObserver(ambientObserver)
-            ambientRegistered = false
-            isAmbient.value = false
+        if (enabled) {
+            runMode = WatchSettings.runDisplayMode(this)
+            wantAmbient = true
+            when (runMode) {
+                RunDisplayMode.ALWAYS_ON -> {
+                    // Hold the screen on; we dim it ourselves after idle.
+                    window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    noteInteraction()
+                }
+                RunDisplayMode.TRUE_AMBIENT -> {
+                    // No keep-screen-on: let the system go ambient; the observer keeps
+                    // our dim screen up (where the OEM allows it).
+                }
+                RunDisplayMode.POWER_SAVER -> {
+                    // Let the screen (and W5) sleep; onEnterAmbient steps aside to the
+                    // watch face, and the ongoing-activity chip taps back in.
+                    wantAmbient = false
+                }
+            }
+        } else {
+            wantAmbient = false
+            dimJob?.cancel()
+            exitDim()
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    /** In Always-on mode, any touch wakes the screen to full brightness and re-arms the dim timer. */
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (wantAmbient && runMode == RunDisplayMode.ALWAYS_ON) noteInteraction()
+        return super.dispatchTouchEvent(ev)
+    }
+
+    private fun noteInteraction() {
+        lastTouchMs = SystemClock.elapsedRealtime()
+        if (dimmed) exitDim()
+        dimJob?.cancel()
+        dimJob = lifecycleScope.launch {
+            delay(DIM_AFTER_MS)
+            if (wantAmbient && SystemClock.elapsedRealtime() - lastTouchMs >= DIM_AFTER_MS) enterDim()
+        }
+    }
+
+    /**
+     * Always-on dim: keep the full run screen (map, heading arrow, stats) exactly as
+     * it was — just drop the panel brightness right down. No swap to a stripped
+     * ambient layout, so the arrow/UI stay visible, only dimmer.
+     */
+    private fun enterDim() {
+        dimmed = true
+        window.attributes = window.attributes.apply { screenBrightness = 0.01f }
+    }
+
+    private fun exitDim() {
+        dimmed = false
+        window.attributes = window.attributes.apply {
+            screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         }
     }
 
     companion object {
+        /** Idle time before the run screen self-dims. */
+        private const val DIM_AFTER_MS = 15_000L
+
         val REQUIRED_PERMISSIONS = arrayOf(
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.BODY_SENSORS,
@@ -400,6 +483,7 @@ fun WearApp(
     var inPreview by remember { mutableStateOf(false) }
     var wasInWorkout by remember { mutableStateOf(false) }
     var showFinished by remember { mutableStateOf(false) }
+    var settingsOpen by remember { mutableStateOf(false) }
 
     // Workout lifecycle: entering clears prior nav; leaving after a run surfaces
     // the finished summary. selectedRoute is kept so exit animations stay valid.
@@ -418,6 +502,7 @@ fun WearApp(
     BackHandler(enabled = inWorkout) { /* swallow — use Stop */ }
     BackHandler(enabled = showFinished) { showFinished = false }
     BackHandler(enabled = !inWorkout && !showFinished && inPreview) { inPreview = false }
+    BackHandler(enabled = settingsOpen) { settingsOpen = false }
 
     // Publish the chosen route to the activity so Start (touch or button) can
     // hand it to the navigator.
@@ -429,6 +514,7 @@ fun WearApp(
     val screen = when {
         inWorkout -> Screen.Activity
         showFinished -> Screen.Finished
+        settingsOpen -> Screen.Settings
         inPreview && selectedRoute != null -> Screen.Preview
         else -> Screen.List
     }
@@ -467,7 +553,12 @@ fun WearApp(
                                     onStopPrepare = onStopPrepare,
                                 )
                             }
-                            Screen.List -> RouteListScreen(routes) { selectedRoute = it; inPreview = true }
+                            Screen.List -> RouteListScreen(
+                                routes = routes,
+                                onSelect = { selectedRoute = it; inPreview = true },
+                                onOpenSettings = { settingsOpen = true },
+                            )
+                            Screen.Settings -> SettingsScreen(onBack = { settingsOpen = false })
                         }
                     }
                 }
@@ -529,11 +620,15 @@ private fun AmbientScreen(
 }
 
 /** Navigation destinations, ordered by depth for slide-direction inference. */
-private enum class Screen { List, Preview, Activity, Finished }
+private enum class Screen { List, Preview, Activity, Finished, Settings }
 
 /** Scrollable list of available GPX routes. */
 @Composable
-private fun RouteListScreen(routes: List<GpxRoute>, onSelect: (GpxRoute) -> Unit) {
+private fun RouteListScreen(
+    routes: List<GpxRoute>,
+    onSelect: (GpxRoute) -> Unit,
+    onOpenSettings: () -> Unit,
+) {
     ScalingLazyColumn(
         modifier = Modifier.fillMaxSize(),
         state = rememberScalingLazyListState(),
@@ -554,6 +649,51 @@ private fun RouteListScreen(routes: List<GpxRoute>, onSelect: (GpxRoute) -> Unit
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
+        }
+        item {
+            Chip(
+                onClick = onOpenSettings,
+                label = { Text("Settings") },
+                colors = ChipDefaults.secondaryChipColors(),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
+/** Watch settings — currently the run-display power mode. */
+@Composable
+private fun SettingsScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    var mode by remember { mutableStateOf(WatchSettings.runDisplayMode(context)) }
+    ScalingLazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        state = rememberScalingLazyListState(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        item { ListHeader { Text("Run display") } }
+        items(RunDisplayMode.entries) { option ->
+            val selected = option == mode
+            Chip(
+                onClick = {
+                    WatchSettings.setRunDisplayMode(context, option)
+                    mode = option
+                },
+                label = {
+                    Text((if (selected) "● " else "○ ") + option.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                },
+                secondaryLabel = { Text(option.blurb, maxLines = 3, overflow = TextOverflow.Ellipsis) },
+                colors = if (selected) ChipDefaults.primaryChipColors() else ChipDefaults.secondaryChipColors(),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        item {
+            Chip(
+                onClick = onBack,
+                label = { Text("Done") },
+                colors = ChipDefaults.secondaryChipColors(),
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 }
@@ -761,6 +901,8 @@ private fun ActiveMap(route: GpxRoute?, state: ExerciseServiceState) {
     // zoomed follow view (never the whole-route overview) during a run.
     val acquiring = state.latestLocation == null
     val current = state.latestLocation ?: trackPoints.lastOrNull() ?: routePoints.firstOrNull()
+    // Track-up heading from GPS course-over-ground (only meaningful while moving),
+    // falling back to the bearing of the last two recorded points.
     val heading = state.headingDegrees ?: trackPoints.takeIf { it.size >= 2 }
         ?.let { GeoUtils.bearingDegrees(it[it.size - 2], it.last()) }
 
@@ -798,6 +940,9 @@ private fun ActiveMap(route: GpxRoute?, state: ExerciseServiceState) {
 
         // 2×2 live stats with icons. Fixed-width cells (never shift); lifted into the
         // circle's wider band so the round screen doesn't clip the columns.
+        // One live clock drives both the time and pace cells, so pace shows as soon
+        // as there's distance + time (instead of waiting on the raw WHS checkpoint).
+        val elapsed = rememberLiveElapsedMillis(state)
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -807,10 +952,10 @@ private fun ActiveMap(route: GpxRoute?, state: ExerciseServiceState) {
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 StatCell(R.drawable.ic_stat_distance, "%.2f".format(state.distanceMeters / 1000), "km")
-                StatCell(R.drawable.ic_stat_pace, formatPace(state.distanceMeters, state.activeDurationMillis), "/km")
+                StatCell(R.drawable.ic_stat_pace, formatPace(state.distanceMeters, elapsed), "/km")
             }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                StatCell(R.drawable.ic_stat_time, formatElapsed(rememberLiveElapsedMillis(state)), "")
+                StatCell(R.drawable.ic_stat_time, formatElapsed(elapsed), "")
                 StatCell(R.drawable.ic_stat_hr, hrText(state.heartRateBpm), "bpm")
             }
         }
@@ -855,21 +1000,42 @@ private fun NavigationCue(nav: NavProgress?, headingDeg: Float?, modifier: Modif
                 subtitle = "${formatDistanceShort(nav.crossTrackMeters)} · rejoin",
                 arrowDeg = nav.bearingToRouteDeg - (headingDeg ?: 0f),
             )
-            nav.nextTurn != null -> {
-                val turn = nav.nextTurn!!
-                CuePill(
-                    background = Color(0xFFF9A825),
-                    title = if (turn.direction == TurnDirection.LEFT) "◀  LEFT" else "RIGHT  ▶",
-                    subtitle = "${turn.distanceMeters.roundToInt()} m",
-                    arrowDeg = null,
-                )
-            }
+            nav.nextTurn != null -> TurnPrompt(nav.nextTurn!!)
             else -> Text(
                 text = "${"%.2f".format(nav.distanceRemainingMeters / 1000)} km to go",
                 color = Color.White.copy(alpha = 0.85f),
                 style = MaterialTheme.typography.caption1,
             )
         }
+    }
+}
+
+/** Prominent turn-by-turn prompt: big directional arrow + "Turn left/right" + distance. */
+@Composable
+private fun TurnPrompt(turn: UpcomingTurn) {
+    val left = turn.direction == TurnDirection.LEFT
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(Color(0xFFF9A825))
+            .padding(horizontal = 20.dp, vertical = 6.dp),
+    ) {
+        Text(
+            if (left) "↰" else "↱",
+            color = Color.Black,
+            style = MaterialTheme.typography.display3,
+        )
+        Text(
+            if (left) "Turn left" else "Turn right",
+            color = Color.Black,
+            style = MaterialTheme.typography.title3,
+        )
+        Text(
+            "${turn.distanceMeters.roundToInt()} m",
+            color = Color.Black.copy(alpha = 0.75f),
+            style = MaterialTheme.typography.caption1,
+        )
     }
 }
 

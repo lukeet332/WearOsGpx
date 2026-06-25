@@ -20,6 +20,8 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.wear.ongoing.OngoingActivity
+import androidx.wear.ongoing.Status
 import androidx.core.app.ServiceCompat
 import androidx.health.services.client.HealthServices
 import androidx.health.services.client.data.DataType
@@ -355,7 +357,8 @@ class ExerciseService : LifecycleService() {
             if (announcedTurnAtMeters.isNaN() ||
                 kotlin.math.abs(turnAbsMeters - announcedTurnAtMeters) > 5.0
             ) {
-                vibrator.vibrate(VibrationEffect.createOneShot(160, VibrationEffect.DEFAULT_AMPLITUDE))
+                // One distinct "turn ahead" buzz (same for left/right — direction is on screen).
+                vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 150, 90, 150), -1))
                 announcedTurnAtMeters = turnAbsMeters
             }
         }
@@ -396,13 +399,24 @@ class ExerciseService : LifecycleService() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE,
         )
-        val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Recording run")
             .setContentText("WearOsGpx is tracking your workout")
             .setSmallIcon(R.drawable.ic_launcher)
             .setOngoing(true)
+            .setCategory(NotificationCompat.CATEGORY_WORKOUT)
             .setContentIntent(pending)
+
+        // Surface a run chip on the watch face (Wear Ongoing Activity) so Power-saver
+        // mode — where the screen sleeps during a run — can tap straight back to the app.
+        OngoingActivity.Builder(this, NOTIFICATION_ID, builder)
+            .setStaticIcon(R.drawable.ic_launcher)
+            .setTouchIntent(pending)
+            .setStatus(Status.Builder().addTemplate("Recording run").build())
             .build()
+            .apply(this)
+
+        val notification: Notification = builder.build()
 
         // The `health` FGS type requires BODY_SENSORS at runtime (API 34+) or
         // startForeground throws. Location is always required; add health only

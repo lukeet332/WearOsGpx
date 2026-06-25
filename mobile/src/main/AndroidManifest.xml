@@ -13,6 +13,13 @@
     <uses-permission android:name="android.permission.health.WRITE_DISTANCE" />
     <uses-permission android:name="android.permission.health.WRITE_HEART_RATE" />
 
+    <!-- Read permissions: lets us verify our own writes and compare against runs
+         written by the native tracker (diagnostics / format parity). -->
+    <uses-permission android:name="android.permission.health.READ_EXERCISE" />
+    <uses-permission android:name="android.permission.health.READ_EXERCISE_ROUTES" />
+    <uses-permission android:name="android.permission.health.READ_DISTANCE" />
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
+
     <!-- Needed to detect / open the Health Connect app on Android 11+. -->
     <queries>
         <package android:name="com.google.android.apps.healthdata" />
@@ -30,6 +37,7 @@
 
         <activity
             android:name=".MainActivity"
+            android:launchMode="singleTask"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -38,6 +46,13 @@
             <!-- Health Connect rationale on Android 13 / standalone HC app. -->
             <intent-filter>
                 <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
+            <!-- Strava OAuth redirect (wearosgpx://localhost?code=…). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="wearosgpx" android:host="localhost" />
             </intent-filter>
         </activity>
 
