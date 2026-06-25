@@ -31,13 +31,19 @@ ALLOWED_SUFFIXES = (".kt", ".kts", ".toml")
 CONTEXT_FILE = (REPO / ".github" / "AI_CONTEXT.md").resolve()
 MODEL_CONFIG = (REPO / ".github" / "ai_model.json").resolve()
 
-# Sensible default if ai_model.json is missing/unreadable: GitHub Models GPT-4.1.
-DEFAULT_CONFIG = {
-    "provider": "github-models",
-    "base_url": "https://models.github.ai/inference",
-    "model": os.environ.get("GH_MODEL", "openai/gpt-4.1"),
-    "api_key_env": "GH_MODELS_TOKEN",
+# Known providers the bot may run on: name -> (OpenAI-compatible base_url, key env var).
+# To add a provider, add a row here and supply its key as the repo secret named below.
+# The monthly ai-model-review job may only switch to a provider whose key is configured.
+PROVIDERS = {
+    "github-models": ("https://models.github.ai/inference", "GH_MODELS_TOKEN"),
+    "gemini":        ("https://generativelanguage.googleapis.com/v1beta/openai", "GEMINI_API_KEY"),
+    "openrouter":    ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
+    "groq":          ("https://api.groq.com/openai/v1", "GROQ_API_KEY"),
+    "mistral":       ("https://api.mistral.ai/v1", "MISTRAL_API_KEY"),
+    "deepseek":      ("https://api.deepseek.com", "DEEPSEEK_API_KEY"),
 }
+DEFAULT_PROVIDER = "github-models"
+DEFAULT_MODEL = "openai/gpt-4.1"
 
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
@@ -49,15 +55,20 @@ def done(msg: str) -> None:
 
 
 def load_model_config() -> dict:
-    cfg = dict(DEFAULT_CONFIG)
+    """Resolve {provider, model} from ai_model.json into {provider, model, base_url,
+    api_key_env} using the PROVIDERS registry. Unknown/missing -> the default."""
+    provider, model = DEFAULT_PROVIDER, DEFAULT_MODEL
     try:
         if MODEL_CONFIG.exists():
             data = json.loads(MODEL_CONFIG.read_text())
-            for k in ("provider", "base_url", "model", "api_key_env"):
-                if isinstance(data.get(k), str) and data[k].strip():
-                    cfg[k] = data[k].strip()
+            if isinstance(data.get("provider"), str) and data["provider"] in PROVIDERS:
+                provider = data["provider"]
+            if isinstance(data.get("model"), str) and data["model"].strip():
+                model = data["model"].strip()
     except Exception as e:
         print(f"Could not read ai_model.json ({e.__class__.__name__}); using default model.")
+    base_url, api_key_env = PROVIDERS[provider]
+    return {"provider": provider, "model": model, "base_url": base_url, "api_key_env": api_key_env}
     return cfg
 
 

@@ -1,7 +1,5 @@
 {
   "provider": "github-models",
-  "base_url": "https://models.github.ai/inference",
   "model": "openai/gpt-4.1",
-  "api_key_env": "GH_MODELS_TOKEN",
-  "_comment": "Active model for the AI fix bot. Edited by ai-model-review.yml (monthly self-assessment) via PR. api_key_env must be one of: GH_MODELS_TOKEN (GitHub Models, free via GITHUB_TOKEN), GEMINI_API_KEY (Google Gemini), or AI_PROVIDER_KEY (generic slot for any other OpenAI-compatible provider whose key you add as a repo secret). base_url is the OpenAI-compatible root (the script appends /chat/completions)."
+  "_comment": "Active model for the AI fix bot. Edited by ai-model-review.yml (monthly self-assessment) via PR. 'provider' must be one of the known providers in .github/scripts/ai_fix.py PROVIDERS (github-models, gemini, openrouter, groq, mistral, deepseek); base_url + the key env var are resolved from there. The bot may only switch to a provider whose API key is configured as a repo secret."
 }
