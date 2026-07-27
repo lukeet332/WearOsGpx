@@ -5,7 +5,7 @@
       "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
       "key_url": "https://aistudio.google.com/app/apikey",
       "model": "gemini-2.5-flash",
-      "label": "Gemini 2.5 Flash (Google)"
+      "label": "Gemini 2.5 Flash (Google, Free)"
     }
   ]
 }
