@@ -28,21 +28,22 @@ import kotlinx.coroutines.flow.callbackFlow
  * Nothing here touches Android lifecycle — that's [com.wearosgpx.service.ExerciseService]'s
  * job. This class is pure WHS plumbing so it stays easy to reason about.
  */
-class ExerciseClientManager(healthServicesClient: HealthServicesClient) {
-
+class ExerciseClientManager(
+    healthServicesClient: HealthServicesClient,
+) {
     private val exerciseClient: ExerciseClient = healthServicesClient.exerciseClient
 
     /** The metrics we want WHS to collect, subject to device capability filtering. */
-    private val desiredDataTypes = setOf(
-        DataType.HEART_RATE_BPM,
-        DataType.LOCATION,
-        DataType.DISTANCE_TOTAL,
-        DataType.SPEED,
-        DataType.CALORIES_TOTAL,
-    )
+    private val desiredDataTypes =
+        setOf(
+            DataType.HEART_RATE_BPM,
+            DataType.LOCATION,
+            DataType.DISTANCE_TOTAL,
+            DataType.SPEED,
+            DataType.CALORIES_TOTAL,
+        )
 
-    suspend fun getCapabilities(): ExerciseCapabilities =
-        exerciseClient.getCapabilitiesAsync().await()
+    suspend fun getCapabilities(): ExerciseCapabilities = exerciseClient.getCapabilitiesAsync().await()
 
     /**
      * Warms up GPS + HR before the run starts (sports-watch-style "acquiring GPS").
@@ -52,9 +53,10 @@ class ExerciseClientManager(healthServicesClient: HealthServicesClient) {
     suspend fun prepareExercise() {
         val running = getCapabilities().getExerciseTypeCapabilities(ExerciseType.RUNNING)
         // Keep DeltaDataType typing (WarmUpConfig requires Set<DeltaDataType>).
-        val warmUpTypes = setOf(DataType.HEART_RATE_BPM, DataType.LOCATION)
-            .filter { it in running.supportedDataTypes }
-            .toSet()
+        val warmUpTypes =
+            setOf(DataType.HEART_RATE_BPM, DataType.LOCATION)
+                .filter { it in running.supportedDataTypes }
+                .toSet()
         val warmUp = WarmUpConfig(ExerciseType.RUNNING, warmUpTypes)
         exerciseClient.prepareExerciseAsync(warmUp).await()
     }
@@ -70,11 +72,13 @@ class ExerciseClientManager(healthServicesClient: HealthServicesClient) {
         val dataTypes = desiredDataTypes.intersect(running.supportedDataTypes)
         Log.i(TAG, "Starting RUNNING exercise with data types: $dataTypes")
 
-        val config = ExerciseConfig.builder(ExerciseType.RUNNING)
-            .setDataTypes(dataTypes)
-            .setIsAutoPauseAndResumeEnabled(false)
-            .setIsGpsEnabled(true)
-            .build()
+        val config =
+            ExerciseConfig
+                .builder(ExerciseType.RUNNING)
+                .setDataTypes(dataTypes)
+                .setIsAutoPauseAndResumeEnabled(false)
+                .setIsGpsEnabled(true)
+                .build()
 
         exerciseClient.startExerciseAsync(config).await()
     }
@@ -84,43 +88,50 @@ class ExerciseClientManager(healthServicesClient: HealthServicesClient) {
      * replays the current exercise (so we recover state after a process restart).
      * The flow unregisters the callback when collection stops.
      */
-    val exerciseUpdateFlow = callbackFlow {
-        val callback = object : ExerciseUpdateCallback {
-            override fun onExerciseUpdateReceived(update: ExerciseUpdate) {
-                trySendBlocking(ExerciseMessage.ExerciseUpdateMessage(update))
-            }
+    val exerciseUpdateFlow =
+        callbackFlow {
+            val callback =
+                object : ExerciseUpdateCallback {
+                    override fun onExerciseUpdateReceived(update: ExerciseUpdate) {
+                        trySendBlocking(ExerciseMessage.ExerciseUpdateMessage(update))
+                    }
 
-            override fun onLapSummaryReceived(lapSummary: ExerciseLapSummary) {
-                // Not used yet — laps come in a later iteration.
-            }
+                    override fun onLapSummaryReceived(lapSummary: ExerciseLapSummary) {
+                        // Not used yet — laps come in a later iteration.
+                    }
 
-            override fun onAvailabilityChanged(dataType: DataType<*, *>, availability: Availability) {
-                if (availability is LocationAvailability) {
-                    trySendBlocking(ExerciseMessage.LocationAvailabilityMessage(availability))
+                    override fun onAvailabilityChanged(
+                        dataType: DataType<*, *>,
+                        availability: Availability,
+                    ) {
+                        if (availability is LocationAvailability) {
+                            trySendBlocking(ExerciseMessage.LocationAvailabilityMessage(availability))
+                        }
+                    }
+
+                    override fun onRegistered() {
+                        Log.d(TAG, "Exercise update callback registered.")
+                    }
+
+                    override fun onRegistrationFailed(throwable: Throwable) {
+                        Log.e(TAG, "Exercise update callback registration failed.", throwable)
+                    }
                 }
-            }
 
-            override fun onRegistered() {
-                Log.d(TAG, "Exercise update callback registered.")
-            }
-
-            override fun onRegistrationFailed(throwable: Throwable) {
-                Log.e(TAG, "Exercise update callback registration failed.", throwable)
-            }
+            exerciseClient.setUpdateCallback(callback)
+            awaitClose { exerciseClient.clearUpdateCallbackAsync(callback) }
         }
-
-        exerciseClient.setUpdateCallback(callback)
-        awaitClose { exerciseClient.clearUpdateCallbackAsync(callback) }
-    }
 
     /** True if an exercise owned by this app is already in progress. */
     suspend fun isExerciseInProgress(): Boolean {
         val info = exerciseClient.getCurrentExerciseInfoAsync().await()
-        return info.exerciseTrackedStatus == ExerciseTrackedStatus.OWNED_EXERCISE_IN_PROGRESS
+        return info.exerciseTrackedStatus.equals(ExerciseTrackedStatus.OWNED_EXERCISE_IN_PROGRESS)
     }
 
     suspend fun pauseExercise() = exerciseClient.pauseExerciseAsync().await()
+
     suspend fun resumeExercise() = exerciseClient.resumeExerciseAsync().await()
+
     suspend fun endExercise() = exerciseClient.endExerciseAsync().await()
 
     companion object {
