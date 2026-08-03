@@ -80,3 +80,4 @@ hold our own `WakeLock`; defer phone sync to when charging/docked, never mid-run
 ## Learnings (appended by the bot)
 
 <!-- The fix bot may append one concise, durable bullet here per PR. Humans review every PR. -->
+- The `WrongConstant` lint check can sometimes incorrectly flag valid enum comparisons; using `.equals()` can be a workaround for such false positives.
