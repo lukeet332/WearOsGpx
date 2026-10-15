@@ -86,3 +86,4 @@ hold our own `WakeLock`; defer phone sync to when charging/docked, never mid-run
 - When `WrongConstant` flags an enum comparison using `==`, explicitly calling `.equals()` can resolve the false positive.
 - The `WrongConstant` lint check can sometimes incorrectly flag enum comparisons using `.equals()`; switching to the idiomatic Kotlin `==` operator can resolve such false positives.
 - The `WrongConstant` lint check can sometimes incorrectly flag enum comparisons using `.equals()`; switching to the idiomatic Kotlin `==` operator can resolve such false positives.
+- The `WrongConstant` lint check can sometimes incorrectly flag comparisons of sealed class instances (like `ExerciseTrackedStatus`) using `.equals()`; switching to the idiomatic Kotlin `==` operator can resolve such false positives.
