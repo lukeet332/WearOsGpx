@@ -125,7 +125,7 @@ class ExerciseClientManager(
     /** True if an exercise owned by this app is already in progress. */
     suspend fun isExerciseInProgress(): Boolean {
         val info = exerciseClient.getCurrentExerciseInfoAsync().await()
-        return info.exerciseTrackedStatus == ExerciseTrackedStatus.OWNED_EXERCISE_IN_PROGRESS
+        return info.exerciseTrackedStatus.equals(ExerciseTrackedStatus.OWNED_EXERCISE_IN_PROGRESS)
     }
 
     suspend fun pauseExercise() = exerciseClient.pauseExerciseAsync().await()
